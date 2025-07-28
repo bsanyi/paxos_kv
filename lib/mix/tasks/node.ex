@@ -9,14 +9,14 @@ defmodule Mix.Tasks.Node do
 
   It also tries to connect to other nodes that are already alive. For instance,
   if you start `:node4` with the `node` task, it will try to connect to
-  `:node0`, `:node1`, `:node2`, `:node3` and also som nodes like `:node5`,
+  `:node0`, `:node1`, `:node2`, `:node3` and also some nodes like `:node5`,
   `:node6`, `:node7` and so on. That means starting `:nodeN` will try to
   connect to the previous N nodes and the next N nodes. Starting `:node0` does
-  not trigger any connections.
+  not trigger any connections. The `node` task uses long names.
 
   In production you must have a more sophisticated clustering strategy, like
-  `libcluster`, but for development and testing the `node` task will simplify
-  your life.
+  `libcluster`, but for development and testing the `node` task will help you
+  simplify your daily tasks.
 
   ## Usage:
 
@@ -26,7 +26,7 @@ defmodule Mix.Tasks.Node do
     $ iex -S mix node 4
   ```
 
-  Start node number 3 without shell:
+  Start node number 3 without the IEx shell:
 
   ```bash
     $ mix node 3
@@ -73,7 +73,7 @@ defmodule Mix.Tasks.Node do
   #    Code.ensure_loaded?(IEx) and IEx.started?()
   #  end
 
-  defp node_name(n) do
+  def node_name(n) do
     {fqdn, _} = System.cmd("hostname", ["-f"])
     :"node#{n}@#{String.trim(fqdn)}"
   end

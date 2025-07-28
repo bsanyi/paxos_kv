@@ -12,7 +12,7 @@ defmodule PaxosKV.Bucket do
 
     %{
       id: bucket,
-      start: {PaxosKV.Supervisor, :start_link, [[bucket: bucket]]},
+      start: {__MODULE__, :start_link, [opts]},
       type: :supervisor
     }
   end

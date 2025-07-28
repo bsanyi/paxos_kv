@@ -4,29 +4,35 @@ defmodule PaxosKV.MixProject do
   def project do
     [
       app: :paxos_kv,
-      version: "0.1.0",
-      elixir: "~> 1.17",
+      version: "0.2.0",
+      elixir: "~> 1.17 or ~> 1.18 or ~> 1.19",
       start_permanent: Mix.env() == :prod,
+      package: package(),
       deps: deps()
     ]
   end
 
-  # Run "mix help compile.app" to learn about applications.
+  defp package() do
+    [
+      description: "A distributed, cluster-wide key-value store implemented on the BEAM.",
+      licenses: ["Apache-2.0"],
+      links: %{"GitHub" => "https://github.com/elixir-ecto/postgrex"}
+    ]
+  end
+
   def application do
     [
-      extra_applications: [:logger | apps(Mix.env())],
+      extra_applications: extra_apps(Mix.env()),
       mod: {PaxosKV.Application, []}
     ]
   end
 
-  defp apps(:dev), do: [:runtime_tools, :wx, :observer]
-  defp apps(_), do: []
+  defp extra_apps(:dev), do: [:logger, :runtime_tools, :wx, :observer]
+  defp extra_apps(_), do: [:logger]
 
-  # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      # {:dep_from_hexpm, "~> 0.3.0"},
-      # {:dep_from_git, git: "https://github.com/elixir-lang/my_dep.git", tag: "0.1.0"}
+      {:ex_doc, ">= 0.0.0", only: :dev, runtime: false}
     ]
   end
 end

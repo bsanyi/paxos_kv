@@ -9,7 +9,7 @@ defmodule PaxosKV.Application do
     cluster_size = Application.get_env(:paxos_kv, :cluster_size, _default = 3)
 
     children = [
-      {PaxosKV.Bucket, bucket: PaxosKV},
+      {PaxosKV.Bucket, bucket: PaxosKV, name: nil},
       {PauseUntil, fn -> Helpers.wait_for_bucket(PaxosKV) end},
       {Cluster, cluster_size: cluster_size}
     ]

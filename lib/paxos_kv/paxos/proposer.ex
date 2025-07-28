@@ -1,13 +1,13 @@
 defmodule PaxosKV.Proposer do
   @name String.to_atom(List.last(Module.split(__MODULE__)))
-  alias PaxosKV.{Helpers,Cluster,Learner}
+  alias PaxosKV.{Helpers, Cluster, Learner}
 
   ###################################
   ####  API
 
   def propose(key, value, opts) do
     {_bucket, name} = Helpers.name(opts, @name)
-    val = {value, opts |> Enum.into(%{}) |> Map.take([:pid])}
+    val = {value, opts |> Enum.into(%{}) |> Map.take([:pid, :node])}
     _propose(name, key, val, 0)
   end
 
@@ -44,7 +44,7 @@ defmodule PaxosKV.Proposer do
       |> phase_one(id, bucket, key, n, nodes)
       |> phase_two(id, bucket, key, n, nodes)
 
-    Learner.choosen(bucket, key, value)
+    Learner.chosen(bucket, key, value)
 
     {:reply, {:ok, value}, {bucket, inc(id)}}
   catch
@@ -58,23 +58,27 @@ defmodule PaxosKV.Proposer do
   ###################################
   ####  Helpers
 
-  defp _propose(name, key, value, n) do
-    proposer = if n < 2, do: name, else: {name, primary_proposer(key)}
+  defp _propose(name, key, value, try_count) do
+    if Helpers.still_valid?(value) do
+      proposer = if try_count < 2, do: name, else: {name, primary_proposer(key)}
 
-    case GenServer.call(proposer, {:propose, key, value}) do
-      {:ok, value} ->
-        value
+      case GenServer.call(proposer, {:propose, key, value}) do
+        {:ok, value} ->
+          value
 
-      {:error, :no_quorum} ->
-        random_backoff()
-        _propose(name, key, value, n)
+        {:error, :no_quorum} ->
+          Helpers.random_backoff()
+          _propose(name, key, value, try_count)
 
-      {:error, :retry} when n == 0 ->
-        _propose(name, key, value, n + 1)
+        {:error, :retry} when try_count == 0 ->
+          _propose(name, key, value, try_count + 1)
 
-      {:error, :retry} ->
-        random_backoff()
-        _propose(name, key, value, n + 1)
+        {:error, :retry} ->
+          Helpers.random_backoff()
+          _propose(name, key, value, try_count + 1)
+      end
+    else
+      nil
     end
   end
 
@@ -96,12 +100,12 @@ defmodule PaxosKV.Proposer do
   end
 
   defp phase_two(value, id, bucket, key, n, nodes) do
-    {:accepted, max_id} = multi_call(nodes, bucket, n, {:accept, key, {id, Node.self()}, value})
+    case multi_call(nodes, bucket, n, {:accept, key, {id, Node.self()}, value}) do
+      {:accepted, max_id} when max_id > id ->
+        throw({:retry, max_id})
 
-    if max_id > id do
-      throw({:retry, max_id})
-    else
-      {id, value}
+      {:accepted, _max_id} ->
+        {id, value}
     end
   end
 
@@ -167,11 +171,5 @@ defmodule PaxosKV.Proposer do
             %{state | accepted?: true, ids: [id | state.ids]}
         end
     end
-  end
-
-  def random_backoff do
-    0..750
-    |> Enum.random()
-    |> Process.sleep()
   end
 end

@@ -18,4 +18,11 @@ defmodule PaxosKV do
       _ -> Keyword.get(opts, :default)
     end
   end
+
+  def node(key, opts \\ []) do
+    case PaxosKV.Learner.get(key, opts) do
+      {_value, %{node: node}} -> node
+      _ -> Keyword.get(opts, :default)
+    end
+  end
 end

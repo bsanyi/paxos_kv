@@ -35,7 +35,7 @@ defmodule PaxosKV.Helpers do
   """
   def quorum?(list, n), do: 2 * length(list) > n
 
-  def monitor(pid, key, monitors) do
+  def monitor_pid(pid, key, monitors) do
     if pid do
       new_monitors =
         for ref <- which_keys(monitors, key), reduce: monitors do
@@ -47,6 +47,14 @@ defmodule PaxosKV.Helpers do
       ref = Process.monitor(pid)
 
       Map.put(new_monitors, ref, key)
+    else
+      monitors
+    end
+  end
+
+  def monitor_node(node, key, monitors) do
+    if node do
+      Map.update(monitors, node, [key], &Enum.uniq([key | &1]))
     else
       monitors
     end
@@ -83,5 +91,35 @@ defmodule PaxosKV.Helpers do
   def name(opts, suffix) do
     bucket = Keyword.get(opts, :bucket, PaxosKV)
     {bucket, Module.concat(bucket, suffix)}
+  end
+
+  def still_valid?({_, %{pid: pid, node: node}}), do: process_alive?(pid) and node_alive?(node)
+  def still_valid?({_, %{pid: pid}}), do: process_alive?(pid)
+  def still_valid?({_, %{node: node}}), do: node_alive?(node)
+  def still_valid?(_), do: true
+
+  def process_alive?(pid) when is_pid(pid) do
+    node = :erlang.node(pid)
+
+    if node == Node.self() do
+      Process.alive?(pid)
+    else
+      :rpc.call(node, Process, :alive?, [pid])
+    end
+  catch
+    _, _ ->
+      false
+  end
+
+  def process_valid?(_), do: false
+
+  def node_alive?(node) do
+    Node.ping(node) == :pong
+  end
+
+  def random_backoff do
+    0..750
+    |> Enum.random()
+    |> Process.sleep()
   end
 end
