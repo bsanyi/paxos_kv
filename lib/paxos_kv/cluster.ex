@@ -1,5 +1,6 @@
 defmodule PaxosKV.Cluster do
-  require PaxosKV.Helpers, as: Helpers
+  require PaxosKV.Helpers.Msg, as: Msg
+  alias PaxosKV.Helpers
 
   @nodes_key Module.concat(__MODULE__, Nodes)
   @cluster_size_key Module.concat(__MODULE__, ClusterSize)
@@ -27,7 +28,44 @@ defmodule PaxosKV.Cluster do
   def resize_cluster(new_size) do
     t = System.system_time()
     node = Node.self()
-    GenServer.multi_call(__MODULE__, {:resize_cluster, {t, node, new_size}})
+
+    case GenServer.multi_call(__MODULE__, {:resize_cluster, {t, node, new_size}}) do
+      {responses, []} ->
+        if Enum.all?(responses, &match?({_node, ^new_size}, &1)) do
+          :ok
+        else
+          :not_in_sync
+        end
+
+      error ->
+        {:error, error}
+    end
+
+    # TODO:
+    #  - try to signal if it was successful
+    #  - check if
+    #    - we have a quorum before resizing
+    #    - quorum is kept after resizing
+    #    - new size isn't below the number of nodes currently in the cluster
+  end
+
+  @doc """
+  Subscribes the caller process or the spcified pid for `:quorum_reached` and
+  `:quorum_lost` cluster events. The events are delivered as standard erlang
+  messages.
+  """
+  def subscribe(pid \\ self()) do
+    GenServer.call(__MODULE__, {:subscribe, pid})
+  end
+
+  @doc """
+  The opposite of `subscribe/0,1`. It removes the given pid from
+  the list of subscribed processes.
+  """
+  def unsubscribe(pid \\ self()) do
+    GenServer.call(__MODULE__, {:unsubscribe, pid})
+  after
+    Helpers.flush_messages([:quorum_reached, :quorum_lost])
   end
 
   ############################################
@@ -57,12 +95,12 @@ defmodule PaxosKV.Cluster do
       update_size({0, Node.self(), cluster_size})
 
       for node <- Node.list([:visible, :this]) do
-        send(self(), Helpers.nodeup(node))
+        send(self(), Msg.nodeup(node))
       end
 
-      {:ok, nil}
+      {:ok, []}
     else
-      Logger.error("This node is not started in distributed mode.")
+      Logger.warning("This node is not started in distributed mode.")
       :ignore
     end
   end
@@ -78,15 +116,32 @@ defmodule PaxosKV.Cluster do
     {:reply, :pong, state}
   end
 
+  def handle_call({:subscribe, pid}, _from, state) when is_pid(pid) do
+    notify(pid, quorum?())
+    ref = Process.monitor(pid)
+    {:reply, :ok, Enum.uniq([{ref, pid} | state])}
+  end
+
+  def handle_call({:unsubscribe, pid}, _from, state) when is_pid(pid) do
+    for {ref, p} <- state, p == pid do
+      Process.demonitor(ref, [:flush])
+    end
+
+    {:noreply, new_state} =
+      handle_info(Msg.monitor_down(ref: nil, type: :process, pid: pid, reason: nil), state)
+
+    {:reply, :ok, new_state}
+  end
+
   def handle_call({:resize_cluster, {_time, _node, new_size} = new}, _from, state) do
     {nodes, n} = nodes_and_cluster_size()
 
     if update_size(new) == :updated do
-      log("Cluster resize", nodes, nodes, n, new_size)
+      publish("Cluster resize", nodes, nodes, n, new_size, state)
       GenServer.abcast(__MODULE__, {:resize_cluster, new})
     end
 
-    {:reply, :ok, state}
+    {:reply, cluster_size(), state}
   end
 
   @impl true
@@ -94,35 +149,40 @@ defmodule PaxosKV.Cluster do
     {nodes, n} = nodes_and_cluster_size()
 
     if update_size(new) == :updated do
-      log("Cluster resize", nodes, nodes, n, new_size)
+      publish("Cluster resize", nodes, nodes, n, new_size, state)
     end
 
     {:noreply, state}
   end
 
   @impl true
-  def handle_info(Helpers.nodeup(node), state) do
+  def handle_info(Msg.nodeup(node), state) do
     Task.async(__MODULE__, :sync_with_node, [node])
     Logger.debug("[#{Node.self()}] Node #{node} connected.", ansi_color: :faint)
     {:noreply, state}
   end
 
-  def handle_info(Helpers.nodedown(node), state) do
+  def handle_info(Msg.nodedown(node), state) do
     {nodes, n} = nodes_and_cluster_size()
     new_nodes = Enum.reject(nodes, &(&1 == node))
     persist(new_nodes)
-    log("Node #{node} is down.", nodes, new_nodes, n, n)
+    publish("Node #{node} is down.", nodes, new_nodes, n, n, state)
     {:noreply, state}
   end
 
-  def handle_info(Helpers.task_reply(ref: ref, reply: node), state)
+  def handle_info(Msg.task_reply(ref: ref, reply: node), state)
       when is_reference(ref) and is_atom(node) do
     Process.demonitor(ref, [:flush])
     {nodes, n} = nodes_and_cluster_size()
     new_nodes = Enum.uniq([node | nodes])
     persist(new_nodes)
-    log("Node #{node} is up.", nodes, new_nodes, n, n)
+    publish("Node #{node} is up.", nodes, new_nodes, n, n, state)
     {:noreply, state}
+  end
+
+  def handle_info(Msg.monitor_down(ref: ref, type: :process, pid: pid, reason: _), state) do
+    new_state = Enum.reject(state, fn {r, p} -> r == ref or p == pid end)
+    {:noreply, new_state}
   end
 
   ############################################
@@ -135,19 +195,22 @@ defmodule PaxosKV.Cluster do
   end
 
   defp persist(nodes) do
-    :persistent_term.put(@nodes_key, nodes)
+    :persistent_term.put(@nodes_key, Enum.sort(nodes))
   end
 
   defp update_size(new) do
-    current = :persistent_term.get(@cluster_size_key, {-1, nil, nil})
+    current = {_, _, old} = :persistent_term.get(@cluster_size_key, {-1, nil, nil})
 
     if new > current do
       :persistent_term.put(@cluster_size_key, new)
-      :updated
+      if old != new, do: :updated
     end
   end
 
-  defp log(msg, old_nodes, new_nodes, old_cluster_size, new_cluster_size) do
+  defp notify(pid, true = _quorum?), do: send(pid, :quorum_reached)
+  defp notify(pid, false = _quorum?), do: send(pid, :quorum_lost)
+
+  defp publish(msg, old_nodes, new_nodes, old_cluster_size, new_cluster_size, subscribers) do
     old_quorum? = Helpers.quorum?(old_nodes, old_cluster_size)
     new_quorum? = Helpers.quorum?(new_nodes, new_cluster_size)
     quorum = if new_quorum?, do: "quorum:yes", else: "quorum:no"
@@ -167,9 +230,11 @@ defmodule PaxosKV.Cluster do
 
     cond do
       old_quorum? and not new_quorum? ->
+        for {_ref, pid} <- subscribers, do: notify(pid, false)
         Logger.warning("[#{Node.self()}] Quorum lost. [#{node_stat}]")
 
       not old_quorum? and new_quorum? ->
+        for {_ref, pid} <- subscribers, do: notify(pid, true)
         Logger.info("[#{Node.self()}] Quorum reached. [#{node_stat}]")
 
       n > new_cluster_size ->

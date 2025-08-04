@@ -1,6 +1,6 @@
 # PaxosKV
 
-A distributed, cluster-wide key-value store implemented on the BEAM.
+**A distributed, cluster-wide key-value store implemented on the BEAM.**
 
 The primary goal of this tool is to establish a consensus layer for distributed
 BEAM applications, serving as a foundation upon which other applications can be
@@ -119,7 +119,7 @@ the acceptors.
 
 Monitor down messages don't get lost. They are delivered even when a remote pid
 is monitored and the remote host is disconnected. In `PaxosKV` this is
-beneficial. This mechanism handles metwork splits well.
+beneficial. This mechanism handles network splits well.
 
 You can check the pid associated with a `key` by calling `PaxosKV.pid(key)`. It
 returns `nil` if there's no pid associated with the key, or there's no key
@@ -130,9 +130,10 @@ the key when the given node goes down or disconnects:
 
     PaxosKV.put(key, value, node: node)
 
-The options `pid:` and `node:` can be used together. The order of the options
-does not matter. In that case only one of them triggers, the key-value pair is
-gets removed.
+The options `pid:` and `node:` can be used together. In case one of them
+triggers, the key-value pair is removed. The order of the options does not
+matter. `PaxosKV.node(key)` can be used to get the node set by `node: _`
+option.
 
 There's another strange way to erase keys from `PaxosKV`, and that is by using
 buckets. A bucket is just a supervisor with its child processes from the BEAMs
@@ -261,10 +262,10 @@ function to adjust the value to a new target size. It's crucial to note that
 setting a smaller `cluster_size` than the number of currently available nodes
 is not recommended as it may lead to consnsus problems.
 
-To ensure a stable cluster, we recommend scaling in small increments.
+To ensure a stable cluster, we recommend scaling in small increments/dcrements.
 
 If you want to add a new node to the cluster, first increase the `cluster_size`
-by 1 with `resize_cluster/1`, and then start the new node. This ansures that
+by 1 with `resize_cluster/1`, and then start the new node. This ensures that
 the actual number of nodes is never larger than the `cluster_size`.  If you
 want to add more than one nodes, repeat these two steps until you reach the
 desired size.

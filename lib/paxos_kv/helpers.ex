@@ -60,32 +60,23 @@ defmodule PaxosKV.Helpers do
     end
   end
 
+  @doc """
+  Takes a list of messages and eliminates all the messages from the process mailbox.
+  """
+  def flush_messages([msg | rest]) do
+    receive do
+      ^msg -> :ok
+    after
+      0 -> :ok
+    end
+
+    flush_messages(rest)
+  end
+
+  def flush_messages([]), do: :ok
+
   defp which_keys(map, value) do
     for {k, v} <- map, v == value, do: k
-  end
-
-  defmacro nodeup(node) do
-    quote do
-      {:nodeup, unquote(node)}
-    end
-  end
-
-  defmacro nodedown(node) do
-    quote do
-      {:nodedown, unquote(node)}
-    end
-  end
-
-  defmacro task_reply(ref: ref, reply: reply) do
-    quote do
-      {unquote(ref), unquote(reply)}
-    end
-  end
-
-  defmacro monitor_down(ref: ref, type: type, pid: pid, reason: reason) do
-    quote do
-      {:DOWN, unquote(ref), unquote(type), unquote(pid), unquote(reason)}
-    end
   end
 
   def name(opts, suffix) do
@@ -104,7 +95,7 @@ defmodule PaxosKV.Helpers do
     if node == Node.self() do
       Process.alive?(pid)
     else
-      :rpc.call(node, Process, :alive?, [pid])
+      :erpc.call(node, Process, :alive?, [pid])
     end
   catch
     _, _ ->

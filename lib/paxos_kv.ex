@@ -1,4 +1,6 @@
 defmodule PaxosKV do
+  @moduledoc File.read!("README.md")
+
   def put(key, value, opts \\ []) do
     case PaxosKV.Proposer.propose(key, value, opts) do
       {value, _meta} -> value

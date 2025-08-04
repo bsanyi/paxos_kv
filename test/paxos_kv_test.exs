@@ -143,21 +143,42 @@ defmodule PaxosKVTest do
 
   test "cluster can be resized", %{node1: node1, node2: node2, node3: node3} do
     nodes = [node1, node2, node3]
+    assert [3, 3, 3] == cluster_sizes(nodes)
 
-    a = Enum.map(nodes, &call(&1, PaxosKV.Cluster, :cluster_size, []))
-    assert a == [3, 3, 3]
+    PaxosKV.Cluster.subscribe()
+    assert_receive :quorum_reached
 
-    PaxosKV.Cluster.resize_cluster(2)
-    b = Enum.map(nodes, &call(&1, PaxosKV.Cluster, :cluster_size, []))
-    assert b == [2, 2, 2]
+    assert :ok == PaxosKV.Cluster.resize_cluster(9)
+    assert [9, 9, 9] == cluster_sizes(nodes)
+    assert_receive :quorum_lost
 
-    PaxosKV.Cluster.resize_cluster(9)
-    c = Enum.map(nodes, &call(&1, PaxosKV.Cluster, :cluster_size, []))
-    assert c == [9, 9, 9]
+    assert :ok == PaxosKV.Cluster.resize_cluster(1)
+    assert [1, 1, 1] == cluster_sizes(nodes)
+    assert_receive :quorum_reached
+
+    assert :ok == PaxosKV.Cluster.resize_cluster(2)
+    assert [2, 2, 2] == cluster_sizes(nodes)
+    refute_receive :quorum_reached
+
+    PaxosKV.Cluster.unsubscribe()
+
+    assert :ok == PaxosKV.Cluster.resize_cluster(1)
+    assert [1, 1, 1] == cluster_sizes(nodes)
+
+    assert :ok == PaxosKV.Cluster.resize_cluster(3)
+    assert [3, 3, 3] == cluster_sizes(nodes)
+
+    assert :ok == PaxosKV.Cluster.resize_cluster(9)
+    assert [9, 9, 9] == cluster_sizes(nodes)
+
+    refute_receive :quorum_reached
+    refute_receive :quorum_lost
 
     PaxosKV.Cluster.resize_cluster(3)
-    d = Enum.map(nodes, &call(&1, PaxosKV.Cluster, :cluster_size, []))
-    assert d == [3, 3, 3]
+  end
+
+  defp cluster_sizes(nodes) do
+    Enum.map(nodes, &call(&1, PaxosKV.Cluster, :cluster_size, []))
   end
 
   defp call(node, m, f, a) do

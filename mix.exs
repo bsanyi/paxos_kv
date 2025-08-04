@@ -4,7 +4,7 @@ defmodule PaxosKV.MixProject do
   def project do
     [
       app: :paxos_kv,
-      version: "0.2.0",
+      version: "0.2.1",
       elixir: "~> 1.17 or ~> 1.18 or ~> 1.19",
       start_permanent: Mix.env() == :prod,
       package: package(),
@@ -16,7 +16,7 @@ defmodule PaxosKV.MixProject do
     [
       description: "A distributed, cluster-wide key-value store implemented on the BEAM.",
       licenses: ["Apache-2.0"],
-      links: %{"GitHub" => "https://github.com/elixir-ecto/postgrex"}
+      links: %{"GitHub" => "https://github.com/bsanyi/paxos_kv"}
     ]
   end
 

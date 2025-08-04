@@ -2,6 +2,7 @@ defmodule PaxosKV.Acceptor do
   @name String.to_atom(List.last(Module.split(__MODULE__)))
 
   alias PaxosKV.{Cluster, Helpers, Learner}
+  require PaxosKV.Helpers.Msg, as: Msg
 
   ###################################
   ####  API
@@ -19,8 +20,6 @@ defmodule PaxosKV.Acceptor do
 
   ###################################
   ####  Elixir/Erlang/OTP API
-
-  require Helpers
 
   def start_link(opts) do
     {bucket, name} = Helpers.name(opts, @name)
@@ -126,7 +125,7 @@ defmodule PaxosKV.Acceptor do
   end
 
   @impl true
-  def handle_info(Helpers.monitor_down(ref: ref, type: :process, pid: _, reason: _), state) do
+  def handle_info(Msg.monitor_down(ref: ref, type: :process, pid: _, reason: _), state) do
     if Map.has_key?(state.pid_monitors, ref) do
       key = state.pid_monitors[ref]
 
@@ -151,7 +150,7 @@ defmodule PaxosKV.Acceptor do
     end
   end
 
-  def handle_info(Helpers.nodedown(node), state) do
+  def handle_info(Msg.nodedown(node), state) do
     keys = Map.get(state.node_monitors, node, [])
 
     new_pid_monitors = Map.reject(state.pid_monitors, fn {_key, value} -> value in keys end)
@@ -166,7 +165,7 @@ defmodule PaxosKV.Acceptor do
      }}
   end
 
-  def handle_info(Helpers.nodeup(_node), state) do
+  def handle_info(Msg.nodeup(_node), state) do
     {:noreply, state}
   end
 
