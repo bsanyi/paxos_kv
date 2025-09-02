@@ -62,6 +62,19 @@ defmodule PaxosKVTest do
     end
   end
 
+  test "cannot register if pid or node not alive" do
+    pid = spawn(fn -> nil end)
+    node = Node.self() |> to_string() |> String.replace("node1@", "node666@") |> String.to_atom()
+
+    Helpers.wait_for(fn -> Process.alive?(pid) == false end)
+    Helpers.wait_for(fn -> :net_adm.ping(node) == :pang end)
+
+    assert nil == PaxosKV.put(:some_key, :some_value, pid: pid)
+    assert nil == PaxosKV.put(:some_key, :some_value, node: node)
+    assert nil == PaxosKV.put(:some_key, :some_value, pid: pid, node: node)
+    assert nil != PaxosKV.put(:some_key, :some_value, pid: self())
+  end
+
   test "key is deleted when associated node goes down" do
     node = Mix.Tasks.Node.node_name(4)
     {:ok, node4, _} = :peer.start_link(%{name: node, longnames: true, connection: 0})
