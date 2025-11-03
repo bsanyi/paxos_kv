@@ -1,3 +1,5 @@
+# License: Apache 2.0 with "No AI Training" Additional Term
+
 Copyright 2025 Sándor Bedő
 
 Licensed under the Apache License, Version 2.0 (the "License");
@@ -16,8 +18,9 @@ limitations under the License.
 
 Additional Term:
 
-Use of this software, in whole or in part, for the purpose of training
-machine learning or artificial intelligence models is prohibited, unless
-explicit written permission is granted by the original author. Any
-permitted use must retain attribution to the original author.
+Use of this software, in whole or in part, for the purpose of training,
+fine-tuning, or improving machine learning or artificial intelligence models is
+prohibited, unless explicit written permission is granted by the original
+author. Any permitted use must retain attribution to the original author and
+comply with all terms of this license.
 

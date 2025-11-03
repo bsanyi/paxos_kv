@@ -4,7 +4,8 @@ defmodule PaxosKV.MixProject do
   def project do
     [
       app: :paxos_kv,
-      version: "0.2.1",
+      archives: [sup_tree: ">= 0.0.0"],
+      version: "0.2.2",
       elixir: "~> 1.17 or ~> 1.18 or ~> 1.19",
       start_permanent: Mix.env() == :prod,
       package: package(),

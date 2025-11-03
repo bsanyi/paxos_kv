@@ -5,7 +5,7 @@ defmodule PaxosKV.Helpers do
   This is a syncronization function. It blocks the caller until the `predicate`
   function returns a truthy value (anything but `nil` or `false`).
   """
-  def wait_for(predicate, sleep_period_ms \\ 300) do
+  def wait_for(predicate, sleep_period_ms \\ 300, counter \\ 0) do
     pred? =
       try do
         predicate.()
@@ -13,9 +13,11 @@ defmodule PaxosKV.Helpers do
         _, _ -> false
       end
 
-    unless pred? do
+    if pred? do
+      counter
+    else
       Process.sleep(sleep_period_ms)
-      wait_for(predicate, sleep_period_ms)
+      wait_for(predicate, sleep_period_ms, counter + 1)
     end
   end
 
@@ -79,9 +81,9 @@ defmodule PaxosKV.Helpers do
     for {k, v} <- map, v == value, do: k
   end
 
-  def name(opts, suffix) do
+  def name(opts, bucket_suffix) do
     bucket = Keyword.get(opts, :bucket, PaxosKV)
-    {bucket, Module.concat(bucket, suffix)}
+    {bucket, Module.concat(bucket, bucket_suffix)}
   end
 
   def still_valid?({_, %{pid: pid, node: node}}), do: process_alive?(pid) and node_alive?(node)
@@ -101,8 +103,6 @@ defmodule PaxosKV.Helpers do
     _, _ ->
       false
   end
-
-  def process_valid?(_), do: false
 
   def node_alive?(node) do
     Node.ping(node) == :pong

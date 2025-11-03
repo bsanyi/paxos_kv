@@ -1,14 +1,50 @@
 defmodule PaxosKV.Proposer do
   @name String.to_atom(List.last(Module.split(__MODULE__)))
-  alias PaxosKV.{Helpers, Cluster, Learner}
+  alias PaxosKV.{Helpers, Cluster, Acceptor, Learner}
 
   ###################################
   ####  API
 
+  @doc """
+  Asks the local Proposer to convince the cluster about a `value`.
+
+  When it detects that there are other Proposer(s) trying to do the same, and
+  the liveness property of Paxos is in danger, it falls back to a primary
+  proposer (running on a node that is determined by the key) instead of the
+  local service.
+
+  ## Return values:
+
+  - `{:ok, value}`: the `value` is the chosen (consensus) value for the `key`
+  - `{:error, :no_quorum}`: there are't enough nodes participating in the cluster
+  - `{:error, :invalid_value}`: the `pid` or `node` provided in `opts` is not alive
+  """
   def propose(key, value, opts) do
     {_bucket, name} = Helpers.name(opts, @name)
-    val = {value, opts |> Enum.into(%{}) |> Map.take([:pid, :node])}
-    _propose(name, key, val, 0)
+    value = {value, opts |> Enum.into(%{}) |> Map.take([:pid, :node])}
+    __propose(name, key, value)
+  end
+
+  defp __propose(name, key, value) do
+    if Helpers.still_valid?(value) do
+      case GenServer.call(name, {:propose, key, value}) do
+        {:ok, _value} = response ->
+          response
+
+        {:error, :no_quorum} = response ->
+          response
+
+        {:error, :too_many_rounds} when is_atom(name) ->
+          # redirect to the proposer on the primary node in order to serialize requests
+          __propose({name, primary_node(key)}, key, value)
+
+        {:error, :too_many_rounds} when is_tuple(name) ->
+          # we already falled back to the primary proposer => all we need to do is just retry
+          __propose(name, key, value)
+      end
+    else
+      {:error, :invalid_value}
+    end
   end
 
   ###################################
@@ -24,9 +60,13 @@ defmodule PaxosKV.Proposer do
 
   use GenServer
 
+  defmodule State do
+    defstruct [:id, :bucket]
+  end
+
   @impl true
   def init(bucket) do
-    {:ok, {bucket, {0, Node.self()}}}
+    {:ok, %State{bucket: bucket, id: {0, Node.self()}}}
   end
 
   @impl true
@@ -34,55 +74,48 @@ defmodule PaxosKV.Proposer do
     {:reply, :pong, state}
   end
 
-  def handle_call({:propose, key, value}, _from, {bucket, id}) do
+  def handle_call({:propose, key, value}, from, state, try_round \\ 1) do
     {nodes, n} = Cluster.nodes_and_cluster_size()
 
-    unless Helpers.quorum?(nodes, n), do: throw(:no_quorum)
+    value =
+      nodes
+      |> check_quorum(n)
+      |> Acceptor.prepare(state.bucket, state.id, key)
+      |> check_quorum(n)
+      |> check_nacks()
+      |> accepted_value(value)
 
-    {id, value} =
-      value
-      |> phase_one(id, bucket, key, n, nodes)
-      |> phase_two(id, bucket, key, n, nodes)
+    nodes
+    |> Acceptor.accept(state.bucket, state.id, key, value)
+    |> check_quorum(n)
+    |> check_nacks(1)
 
-    Learner.chosen(bucket, key, value)
+    Learner.chosen(state.bucket, key, value)
 
-    {:reply, {:ok, value}, {bucket, inc(id)}}
+    {:reply, {:ok, value}, %{state | id: inc(state.id)}}
   catch
     :no_quorum ->
-      {:reply, {:error, :no_quorum}, {bucket, inc(id)}}
+      {:reply, {:error, :no_quorum}, %{state | id: inc(state.id)}}
 
-    {:retry, max_id} ->
-      {:reply, {:error, :retry}, {bucket, inc(max_id)}}
+    {:nack, id, try_increment} when try_round <= 3 ->
+      handle_call({:propose, key, value}, from, %{state | id: inc(id)}, try_round + try_increment)
+
+    {:nack, id, _} ->
+      {:reply, {:error, :too_many_rounds}, %{state | id: inc(id)}}
   end
 
   ###################################
   ####  Helpers
 
-  defp _propose(name, key, value, try_count) do
-    if Helpers.still_valid?(value) do
-      proposer = if try_count < 2, do: name, else: {name, primary_proposer(key)}
-
-      case GenServer.call(proposer, {:propose, key, value}) do
-        {:ok, value} ->
-          value
-
-        {:error, :no_quorum} ->
-          Helpers.random_backoff()
-          _propose(name, key, value, try_count)
-
-        {:error, :retry} when try_count == 0 ->
-          _propose(name, key, value, try_count + 1)
-
-        {:error, :retry} ->
-          Helpers.random_backoff()
-          _propose(name, key, value, try_count + 1)
-      end
-    else
-      nil
-    end
-  end
-
-  defp primary_proposer(key) do
+  #`primary_node(key)` choses a node for the `key`.
+  #
+  # When there are too many retries - that means more than one Proposer tries
+  # to convince the cluster about a value, and there is a long race between
+  # those Proposers -, this function provides a way to chose a single proposer
+  # and fall back to that service instead of the local one. This function
+  # returns the same node name on all nodes, so eventually every proposer will
+  # fall back to the same primary proposer.
+  defp primary_node(key) do
     {nodes, n} = Cluster.nodes_and_cluster_size()
 
     nodes
@@ -90,86 +123,53 @@ defmodule PaxosKV.Proposer do
     |> Enum.at(:erlang.phash2(key, n))
   end
 
+  # `check_quorum(list, n)` normally just returns the `list` when it is long
+  # enugh. That is longer than `n / 2`. Otherwise it throws an exception. This
+  # is useful because if it returns, we know the there are enough nodes,
+  # responses, or whatever the list contains.
+  defp check_quorum(list, n) do
+    if 2 * length(list) > n do
+      list
+    else
+      throw(:no_quorum)
+    end
+  end
+
+  # `check_nacks/1,2` normally returns its first argument, which is supposed to
+  # be a list of responses from the acceptors. The exceptional case is when the
+  # list contains `{:nack, id}` type messages. In that case an exception is
+  # thrown with the highest `id` in those tuples.
+  defp check_nacks(responses, try_increment \\ 0) do
+    responses
+    |> Enum.filter(&match?({:nack, _}, &1))
+    |> case do
+      [] ->
+        responses
+
+      nacks ->
+        {:nack, max_id} = Enum.max(nacks)
+        throw({:nack, max_id, try_increment})
+    end
+  end
+
+  # `accept_value(responses, orig_value)` is called with the list of Acceptor
+  # responses from the prepare phase of Paxos. If there are `{:promise, id,
+  # value}` responses in the list, this function returns the `value` with the
+  # highes `id` among them. Otherwise it returns the `orig_value` argument.
+  # This function is used to determine which value should a Proposer go on in
+  # the accept phase of Paxos.
+  defp accepted_value(responses, orig_value) do
+    responses
+    |> Enum.filter(&match?({:promise, _id, _value}, &1))
+    |> case do
+      [] ->
+        orig_value
+
+      accepteds ->
+        {:promise, _id, value} = Enum.max(accepteds)
+        value
+    end
+  end
+
   defp inc({n, _node}), do: {n + 1, Node.self()}
-
-  defp phase_one(value, id, bucket, key, n, nodes) do
-    case multi_call(nodes, bucket, n, {:prepare, key, {id, Node.self()}}) do
-      {:ok, value2} -> value2
-      :ok -> value
-    end
-  end
-
-  defp phase_two(value, id, bucket, key, n, nodes) do
-    case multi_call(nodes, bucket, n, {:accept, key, {id, Node.self()}, value}) do
-      {:accepted, max_id} when max_id > id ->
-        throw({:retry, max_id})
-
-      {:accepted, _max_id} ->
-        {id, value}
-    end
-  end
-
-  defp multi_call(nodes, bucket, n, message) do
-    name = Module.concat(bucket, Acceptor)
-
-    responses =
-      nodes
-      |> GenServer.multi_call(name, message, 5_000)
-      |> elem(0)
-      |> Enum.map(fn {_node, reply} -> reply end)
-
-    stat = stat(responses)
-
-    cond do
-      not Helpers.quorum?(responses, n) ->
-        throw(:no_quorum)
-
-      stat.nack? ->
-        throw({:retry, Enum.max(stat.nacks)})
-
-      stat.promise? and stat.value? ->
-        value = stat.accepted |> Enum.max() |> elem(1)
-        {:ok, value}
-
-      stat.promise? ->
-        :ok
-
-      stat.accepted? ->
-        {:accepted, Enum.max(stat.ids)}
-    end
-  end
-
-  defp stat(responses) do
-    for resp <- responses,
-        reduce: %{
-          ids: [],
-          promise?: false,
-          value?: false,
-          nacks: [],
-          nack?: false,
-          accepted: [],
-          accepted?: false
-        } do
-      state ->
-        case resp do
-          :promise ->
-            %{state | promise?: true}
-
-          {:promise, {id, _node}, value} ->
-            %{
-              state
-              | promise?: true,
-                value?: true,
-                accepted: [{id, value} | state.accepted],
-                ids: [id | state.ids]
-            }
-
-          {:nack, {id, _node}} ->
-            %{state | nack?: true, nacks: [id | state.nacks]}
-
-          {:accepted, {id, _node}} ->
-            %{state | accepted?: true, ids: [id | state.ids]}
-        end
-    end
-  end
 end

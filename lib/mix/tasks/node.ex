@@ -31,6 +31,12 @@ defmodule Mix.Tasks.Node do
   ```bash
     $ mix node 3
   ```
+
+  You can use an underscore to start a node without specifying the node number.
+  In that case the task is going to figure out the smallest available node number
+  and use that number.
+
+  It is also possible to add further Mix tasks to the command line.
   """
 
   use Mix.Task
@@ -44,37 +50,53 @@ defmodule Mix.Tasks.Node do
     |> run()
   end
 
-  def run([node_number | rest] = args) do
-    node_number = String.to_integer(node_number)
+  def run([node_number | rest]) do
+    node_number = find_node_number(node_number)
 
-    System.cmd("epmd", ["-daemon"])
+    System.cmd("epmd", ["-daemon", "-relaxed_command_check"])
 
     Node.start(node_name(node_number), :longnames)
 
-    for i <- 0..(3 * node_number + 2), i != node_number do
+    for i <- 0..(3 * node_number + 3), i != node_number do
       Node.connect(node_name(i))
     end
 
-    Mix.Tasks.Run.run(args(rest))
-  catch
-    _, _ ->
-      Mix.Tasks.Run.run(args(args))
+    if "app.start" not in rest, do: Mix.Task.run("app.start")
+
+    continue_with_task(rest)
   end
 
-  defp args(args) do
-    #    if iex?() do
-    #      args
-    #    else
-    args ++ ["--no-halt"]
-    #    end
+  defp find_node_number("_") do
+    {:ok, nodes} = :net_adm.names()
+
+    available_node_numbers =
+      nodes
+      |> Enum.map(fn {node, _port} ->
+        node
+        |> to_string()
+        |> String.trim_leading("node")
+      end)
+
+    0
+    |> Stream.iterate(& &1 + 1)
+    |> Enum.find(fn num -> to_string(num) not in available_node_numbers end)
   end
 
-  #  defp iex? do
-  #    Code.ensure_loaded?(IEx) and IEx.started?()
-  #  end
+  defp find_node_number(node_number) do
+    String.to_integer(node_number)
+  end
 
   def node_name(n) do
-    {fqdn, _} = System.cmd("hostname", ["-f"])
+    {fqdn, 0} = System.cmd("hostname", ["-f"])
     :"node#{n}@#{String.trim(fqdn)}"
+  end
+
+  defp continue_with_task([]), do: nil
+
+  defp continue_with_task([task_name | args]) do
+    Mix.Task.load_all()
+    Mix.Task.rerun(task_name, args)
+    # task_module = Mix.Task.get(task_name)
+    # task_module.run(args)
   end
 end

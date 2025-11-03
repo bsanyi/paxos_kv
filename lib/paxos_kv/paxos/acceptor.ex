@@ -7,15 +7,22 @@ defmodule PaxosKV.Acceptor do
   ###################################
   ####  API
 
-  def info(key) do
+  def prepare(nodes, bucket, id, key) do
+    multi_call(nodes, bucket, {:prepare, key, id})
+  end
+
+  def accept(nodes, bucket, id, key, value) do
+    multi_call(nodes, bucket, {:accept, key, id, value})
+  end
+
+  @doc """
+  Collects a list of accepted `{id, value}` pairs from the acceptors.
+  """
+  def info(key, bucket) do
     Cluster.nodes()
-    |> GenServer.multi_call(__MODULE__, {:info, key})
-    |> elem(0)
+    |> multi_call(bucket, {:info, key})
+    |> Enum.filter(& &1)
     |> Enum.sort(:desc)
-    |> Enum.flat_map(fn
-      {_node, {_id, value}} -> [value]
-      {_node, nil} -> []
-    end)
   end
 
   ###################################
@@ -57,35 +64,37 @@ defmodule PaxosKV.Acceptor do
   end
 
   def handle_call({:prepare, key, id}, _from, state) do
+    state = handle_priority_messages(state)
     basic_state = Map.get(state.basic_states, key, %BasicPaxosState{})
 
     cond do
-      id > basic_state.min_proposal and basic_state.accepted? ->
+      id <= basic_state.min_proposal ->
+        {:reply, {:nack, basic_state.min_proposal}, state}
+
+      basic_state.accepted? ->
         basic_state
         |> Map.put(:min_proposal, id)
         |> reply(key, state, {:promise, basic_state.accepted_id, basic_state.accepted_value})
 
-      id > basic_state.min_proposal ->
+      true ->
         basic_state
         |> Map.put(:min_proposal, id)
         |> reply(key, state, :promise)
-
-      true ->
-        {:reply, {:nack, basic_state.min_proposal}, state}
     end
   end
 
   def handle_call({:accept, key, id, value}, _from, state) do
+    state = handle_priority_messages(state)
     basic_state = Map.get(state.basic_states, key, %BasicPaxosState{})
 
     cond do
       id < basic_state.min_proposal ->
-        {:reply, {:accepted, basic_state.min_proposal}, state}
+        {:reply, {:nack, basic_state.min_proposal}, state}
 
-      id >= basic_state.min_proposal and not Helpers.still_valid?(value) ->
+      not Helpers.still_valid?(value) ->
         {:reply, {:nack, id}, %{state | basic_states: Map.delete(state.basic_states, key)}}
 
-      id >= basic_state.min_proposal ->
+      true ->
         Learner.accepted(Node.self(), state.bucket, key, id, value)
 
         {new_pid_monitors, new_node_monitors} =
@@ -106,11 +115,7 @@ defmodule PaxosKV.Acceptor do
 
         basic_state
         |> Map.merge(%{accepted?: true, accepted_id: id, accepted_value: value, min_proposal: id})
-        |> reply(
-          key,
-          Map.merge(state, %{pid_monitors: new_pid_monitors, node_monitors: new_node_monitors}),
-          {:accepted, id}
-        )
+        |> reply(key, Map.merge(state, %{pid_monitors: new_pid_monitors, node_monitors: new_node_monitors}), :accepted)
     end
   end
 
@@ -150,6 +155,10 @@ defmodule PaxosKV.Acceptor do
     end
   end
 
+  def handle_info(Msg.nodeup(_node), state) do
+    {:noreply, state}
+  end
+
   def handle_info(Msg.nodedown(node), state) do
     keys = Map.get(state.node_monitors, node, [])
 
@@ -165,14 +174,30 @@ defmodule PaxosKV.Acceptor do
      }}
   end
 
-  def handle_info(Msg.nodeup(_node), state) do
-    {:noreply, state}
-  end
-
   ###################################
   ####  Helpers
 
   defp reply(basic_state, key, state, message) do
     {:reply, message, %{state | basic_states: Map.put(state.basic_states, key, basic_state)}}
+  end
+
+  defp multi_call(nodes, bucket, message) do
+    name = Module.concat(bucket, @name)
+    {responses, _bad_nodes} = GenServer.multi_call(nodes, name, message)
+    Enum.map(responses, fn {_node, response} -> response end)
+  end
+
+  defp handle_priority_messages(state) do
+    receive do
+      Msg.monitor_down(ref: _, type: :process, pid: _, reason: _) = msg ->
+        {:noreply, new_state} = handle_info(msg, state)
+        handle_priority_messages(new_state)
+
+      Msg.nodedown(_node) = msg ->
+        {:noreply, new_state} = handle_info(msg, state)
+        handle_priority_messages(new_state)
+    after
+      0 -> state
+    end
   end
 end

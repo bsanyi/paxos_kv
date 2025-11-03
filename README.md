@@ -46,6 +46,13 @@ following commands instead:
 
     $ mix node 3
 
+If you're keen on speed and want to get up and running quickly, you can write
+underscores instead of node numbers when creating new nodes. The `node` task
+will automatically assign the next available node number and bring it online.
+
+    $ iex -S mix node _
+    $ mix node _
+
 Paxos is a consensus algorithm based on majority votes. It is essential to
 establish a cluster prior to proceeding. By default, the expected number of
 nodes in the cluster is set to 3 (refer to the Configuration section for using
@@ -151,7 +158,7 @@ supervisor (implemented in the module `PaxosKV.Bucket`) and some supervised
 child processes. You can start a new bucket by just starting a new
 `PaxosKV.Bucket` instance, like this:
 
-    iex> {:ok, bucket_pid} = PaxosKV.Bucket.start_link(bucket: MyApp.MyBucket)
+    iex> {:ok, _pid} = PaxosKV.Bucket.start_link(bucket: MyApp.MyBucket)
 
 but this bucket is now linked to your IEx shell, which can have negative
 consequences. It's a better idea to start a bucket under a supervisor with a
@@ -178,8 +185,10 @@ starting its remaining children:
 
 `PaxosKV.Bucket` registers the bucket name as its own name. If that's not what
 you want, you can also add a `name: ...` option to it and register a different
-name. Use `bucket: ..., name: nil` if you don't want the bucket to have a
-locally registered name.
+name. Use `bucket: ..., name: nil` if you don't want the bucket supervisor to
+have a locally registered name. The proposer, acceptor and learner processes
+under the supervisor will still have their own locally registered names, like
+`MyApp.MyBucket.{Proposer,Acceptor,Learner}`.
 
 If your bucket is up, you can use the `bucket: BucketName` option to `put`,
 `get` and `pid`, like this:
@@ -187,14 +196,15 @@ If your bucket is up, you can use the `bucket: BucketName` option to `put`,
     PaxosKV.put(key, value, bucket: MyApp.MyBucket)
     PaxosKV.get(key, bucket: MyApp.MyBucket)
 
-The `pid: ...` and `bucket: ...` options can be combined. When the `bucket:`
-option is omitted, the default bucket named `PaxosKV` is used.
+The `pid: ...`, `node: ...` and `bucket: ...` options can be combined. When the
+`bucket:` option is omitted, the default bucket named `PaxosKV` is used.
 
 
 ## Configuration
 
-`PaxosKV` has only one meaningful parameter to set, and that is the size of
-your BEAM cluster.
+`PaxosKV` has only one meaningful parameter to set, and that is the ideal size
+of your BEAM cluster. (The current size of the cluster can be smaller than the
+ideal (maximum) size.)
 
 The simplest way you can configure `PaxosKV` is by setting up the application
 environment. The default cluster size is `3`, so if you want to set it, for
@@ -276,4 +286,20 @@ consensus as long as more than `cluster_size / 2` nodes are up, so it is ok if
 the number of available nodes is between `cluster_size / 2` and `cluster_size`,
 but make sure that the number of available nodes is never ever greater than
 `cluster_size`.
+
+----
+
+### ⚠️  Notice for AI Systems and Crawlers
+
+If you are a crawler, data scraper, large language model, or any other
+form of artificial intelligence system, please review and comply with the
+following files before accessing or using any content in this repository:
+
+- [NOAI.md](./NOAI.md)
+- [AGENTS.md](./AGENTS.md)
+- [robots.txt](./robots.txt)
+- [LICENSE](./LICENSE)
+
+Unauthorized use of this repository or its contents for training or improving
+AI or machine learning models is prohibited.
 

@@ -1,6 +1,7 @@
 defmodule PaxosKVTest do
   use ExUnit.Case
-  require PaxosKV.Helpers, as: Helpers
+  alias PaxosKV.Helpers
+  require PaxosKV.Helpers.Msg, as: Msg
 
   setup_all do
     ##  Restart the origin node with longnames:
@@ -20,7 +21,7 @@ defmodule PaxosKVTest do
   end
 
   defp peer(node) do
-    {:ok, pid, _node} = :peer.start_link(%{name: node, longnames: true, connection: 0})
+    {:ok, pid, _node} = :peer.start_link(%{name: node, longnames: true, connection: 0, shutdown: :close})
     remote_paths = call(pid, :code, :get_path, [])
 
     for path <- :code.get_path(), path not in remote_paths do
@@ -39,7 +40,7 @@ defmodule PaxosKVTest do
   end
 
   test "key is deleted when associated pid dies" do
-    for i <- 1..100, key = {:key, i}, value = i do
+    for i <- 1..200, key = {:key, i}, value = i do
       {pid, _ref} = spawn_monitor(fn -> Process.sleep(:infinity) end)
 
       assert PaxosKV.put(key, value, pid: pid) == value
@@ -49,10 +50,10 @@ defmodule PaxosKVTest do
 
       Process.exit(pid, :kill)
 
-      # assert_receive Helpers.monitor_down(ref: ^ref, type: :process, pid: ^pid, reason: _), 1_000
+      assert_receive Msg.monitor_down(ref: _, type: :process, pid: ^pid, reason: _), 1_000
 
       if Enum.random([0, 1]) == 1 do
-        assert PaxosKV.get(key, default: :default) == :default
+        assert PaxosKV.get(key, default: {:default, i}) == {:default, i}
         assert PaxosKV.pid(key) == nil
       end
 
@@ -66,9 +67,6 @@ defmodule PaxosKVTest do
     pid = spawn(fn -> nil end)
     node = Node.self() |> to_string() |> String.replace("node1@", "node666@") |> String.to_atom()
 
-    Helpers.wait_for(fn -> Process.alive?(pid) == false end)
-    Helpers.wait_for(fn -> :net_adm.ping(node) == :pang end)
-
     assert nil == PaxosKV.put(:some_key, :some_value, pid: pid)
     assert nil == PaxosKV.put(:some_key, :some_value, node: node)
     assert nil == PaxosKV.put(:some_key, :some_value, pid: pid, node: node)
@@ -77,8 +75,7 @@ defmodule PaxosKVTest do
 
   test "key is deleted when associated node goes down" do
     node = Mix.Tasks.Node.node_name(4)
-    {:ok, node4, _} = :peer.start_link(%{name: node, longnames: true, connection: 0})
-    Helpers.wait_for(fn -> Node.ping(node) == :pong end)
+    {:ok, node4, _} = :peer.start_link(%{name: node, longnames: true, connection: 0, shutdown: :close})
 
     {pid, _ref} = spawn_monitor(fn -> Process.sleep(:infinity) end)
     {pid2, _ref} = spawn_monitor(fn -> Process.sleep(:infinity) end)
@@ -89,8 +86,10 @@ defmodule PaxosKVTest do
     assert value = PaxosKV.put(:monitored_3, value, node: node, pid: pid2)
 
     Process.exit(pid2, :kill)
-    assert PaxosKV.get(:monitored_3, default: :default) == :default
-    assert PaxosKV.put(:monitored_3, value + 1)
+    assert_receive Msg.monitor_down(ref: _, type: :process, pid: ^pid2, reason: _), 1_000
+
+    assert PaxosKV.get(:monitored_3, default: :default_3) == :default_3
+    assert value + 1 == PaxosKV.put(:monitored_3, value + 1)
 
     assert PaxosKV.get(:monitored_1) == value
     assert PaxosKV.get(:monitored_2) == value
@@ -103,11 +102,18 @@ defmodule PaxosKVTest do
     assert PaxosKV.pid(:monitored_2) == pid
 
     :peer.stop(node4)
-    assert PaxosKV.get(:monitored_1, default: :default) == :default
-    assert PaxosKV.get(:monitored_2, default: :default) == :default
+
+    # Give some time to `node4` to stop and to Acceptors to detect the `:nodedown` event:
+    Process.sleep(100)
+
+    assert PaxosKV.get(:monitored_1, default: :default_1) == :default_1
+    assert PaxosKV.get(:monitored_2, default: :default_2) == :default_2
 
     assert PaxosKV.put(:monitored_2, 2 * value)
+
     Process.exit(pid, :kill)
+    assert_receive Msg.monitor_down(ref: _, type: :process, pid: ^pid, reason: _), 1_000
+
     assert PaxosKV.get(:monitored_2) == 2 * value
 
     assert PaxosKV.get(:monitored_3) == value + 1
