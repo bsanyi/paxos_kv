@@ -43,7 +43,7 @@ defmodule PaxosKVTest do
     for i <- 1..200, key = {:key, i}, value = i do
       {pid, _ref} = spawn_monitor(fn -> Process.sleep(:infinity) end)
 
-      assert PaxosKV.put(key, value, pid: pid) == value
+      assert PaxosKV.put(key, value, pid: pid) == {:ok, value}
 
       assert PaxosKV.get(key) == value
       assert PaxosKV.pid(key) == pid
@@ -57,7 +57,7 @@ defmodule PaxosKVTest do
         assert PaxosKV.pid(key) == nil
       end
 
-      assert PaxosKV.put(key, -value, pid: self()) == -value
+      assert PaxosKV.put(key, -value, pid: self()) == {:ok, -value}
       assert PaxosKV.get(key) == -value
       assert PaxosKV.pid(key) == self()
     end
@@ -67,10 +67,10 @@ defmodule PaxosKVTest do
     pid = spawn(fn -> nil end)
     node = Node.self() |> to_string() |> String.replace("node1@", "node666@") |> String.to_atom()
 
-    assert nil == PaxosKV.put(:some_key, :some_value, pid: pid)
-    assert nil == PaxosKV.put(:some_key, :some_value, node: node)
-    assert nil == PaxosKV.put(:some_key, :some_value, pid: pid, node: node)
-    assert nil != PaxosKV.put(:some_key, :some_value, pid: self())
+    assert {:error, :invalid_value} == PaxosKV.put(:some_key, :some_value, pid: pid)
+    assert {:error, :invalid_value} == PaxosKV.put(:some_key, :some_value, node: node)
+    assert {:error, :invalid_value} == PaxosKV.put(:some_key, :some_value, pid: pid, node: node)
+    assert {:error, :invalid_value} != PaxosKV.put(:some_key, :some_value, pid: self())
   end
 
   test "key is deleted when associated node goes down" do
@@ -81,15 +81,15 @@ defmodule PaxosKVTest do
     {pid2, _ref} = spawn_monitor(fn -> Process.sleep(:infinity) end)
 
     value = 123
-    assert value = PaxosKV.put(:monitored_1, value, node: node)
-    assert value = PaxosKV.put(:monitored_2, value, node: node, pid: pid)
-    assert value = PaxosKV.put(:monitored_3, value, node: node, pid: pid2)
+    assert {:ok, value} = PaxosKV.put(:monitored_1, value, node: node)
+    assert {:ok, value} = PaxosKV.put(:monitored_2, value, node: node, pid: pid)
+    assert {:ok, value} = PaxosKV.put(:monitored_3, value, node: node, pid: pid2)
 
     Process.exit(pid2, :kill)
     assert_receive Msg.monitor_down(ref: _, type: :process, pid: ^pid2, reason: _), 1_000
 
     assert PaxosKV.get(:monitored_3, default: :default_3) == :default_3
-    assert value + 1 == PaxosKV.put(:monitored_3, value + 1)
+    assert {:ok, value + 1} == PaxosKV.put(:monitored_3, value + 1)
 
     assert PaxosKV.get(:monitored_1) == value
     assert PaxosKV.get(:monitored_2) == value
@@ -109,7 +109,7 @@ defmodule PaxosKVTest do
     assert PaxosKV.get(:monitored_1, default: :default_1) == :default_1
     assert PaxosKV.get(:monitored_2, default: :default_2) == :default_2
 
-    assert PaxosKV.put(:monitored_2, 2 * value)
+    PaxosKV.put(:monitored_2, 2 * value)
 
     Process.exit(pid, :kill)
     assert_receive Msg.monitor_down(ref: _, type: :process, pid: ^pid, reason: _), 1_000
@@ -131,7 +131,7 @@ defmodule PaxosKVTest do
         |> Enum.to_list()
         |> Enum.uniq()
 
-      assert match?([{:ok, num}] when num in [1, 2, 3], result)
+      assert match?([{:ok, {:ok, num}}] when num in [1, 2, 3], result)
     end
   end
 
@@ -152,9 +152,9 @@ defmodule PaxosKVTest do
 
     key = :the_same_key_for_all_buckets
 
-    assert value1 == PaxosKV.put(key, value1)
-    assert value2 == PaxosKV.put(key, value2, bucket: Bucket1)
-    assert value3 == PaxosKV.put(key, value3, bucket: Bucket2)
+    assert {:ok, value1} == PaxosKV.put(key, value1)
+    assert {:ok, value2} == PaxosKV.put(key, value2, bucket: Bucket1)
+    assert {:ok, value3} == PaxosKV.put(key, value3, bucket: Bucket2)
     assert value1 == PaxosKV.get(key)
     assert value2 == PaxosKV.get(key, bucket: Bucket1)
     assert value3 == PaxosKV.get(key, bucket: Bucket2)

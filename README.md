@@ -20,7 +20,7 @@ sections.
 
 ## Installation
 
-Add `{:paxos_kv, "~> 0.2.0"}` to your dependencies.
+Add `{:paxos_kv, "~> 0.3.0"}` to your dependencies.
 
 
 ## Usage

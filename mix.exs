@@ -5,7 +5,7 @@ defmodule PaxosKV.MixProject do
     [
       app: :paxos_kv,
       archives: [sup_tree: ">= 0.0.0"],
-      version: "0.2.2",
+      version: "0.3.0",
       elixir: "~> 1.17 or ~> 1.18 or ~> 1.19",
       start_permanent: Mix.env() == :prod,
       package: package(),
@@ -28,7 +28,7 @@ defmodule PaxosKV.MixProject do
     ]
   end
 
-  defp extra_apps(:dev), do: [:logger, :runtime_tools, :wx, :observer]
+  defp extra_apps(:dev), do: [:logger, :wx, :observer]
   defp extra_apps(_), do: [:logger]
 
   defp deps do

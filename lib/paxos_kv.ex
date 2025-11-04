@@ -4,7 +4,9 @@ defmodule PaxosKV do
   alias PaxosKV.{Helpers, Proposer, Learner}
 
   @doc """
-  Stores the given key-value pair in the collective memory of the cluster.
+
+  Stores the given value under the key in the collective memory (a KV store) of
+  the cluster.
 
       PaxosKV.put(key, value)
 
@@ -15,17 +17,29 @@ defmodule PaxosKV do
   * `node: n` -- keep the key-value pair as long as node `n` is connected
   * `no_quorum: :retry | :fail | :return` -- Try again, crash or just return an
     error tuple when there's no quorum.
+
+  The return value of the call is `{:ok, value}` when there's a consensus value
+  for the `key`. The `value` returned is not always the `value` argument of the
+  `PaxosKV.put` function, it can be a value proposed by another process. It can
+  also return `{:error, reason}`, when something goes wrong.
+
+  `{:error, :no_quorum}` means the cluster does not have enough nodes. In order to
+  make a decision / reach consensus, more than `cluster_size / 2` nodes have to
+  be part of the cluster. (Cluster size is a config param.) The option `:no_quorum`
+  can change the behavior of `put`. Whern set to `:retry`, it won't return this
+  tuple, but it will try again and again until it can reach enough nodes. The
+  option `no_quorum: :fail` will generate an exception instead.
   """
   def put(key, value, opts \\ []) do
     case Proposer.propose(key, value, opts) do
       {:ok, {value, _meta}} ->
-        value
+        {:ok, value}
 
-      {:error, :invalid_value} ->
-        nil
+      {:error, :invalid_value} = error ->
+        error
 
       {:error, :no_quorum} = error ->
-        case Keyword.get(opts, :no_quorum, :retry) do
+        case Keyword.get(opts, :no_quorum, :return) do
           :retry ->
             Helpers.random_backoff()
             put(key, value, opts)
