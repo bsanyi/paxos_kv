@@ -4,20 +4,27 @@ defmodule PaxosKV.MixProject do
   def project do
     [
       app: :paxos_kv,
-      archives: [sup_tree: ">= 0.0.0"],
-      version: "0.3.0",
+      version: "0.3.1",
       elixir: "~> 1.17 or ~> 1.18 or ~> 1.19",
       start_permanent: Mix.env() == :prod,
+      docs: docs(),
       package: package(),
       deps: deps()
     ]
   end
 
-  defp package() do
+  defp package do
     [
       description: "A distributed, cluster-wide key-value store implemented on the BEAM.",
       licenses: ["Apache-2.0"],
       links: %{"GitHub" => "https://github.com/bsanyi/paxos_kv"}
+    ]
+  end
+
+  defp docs do
+    [
+      extras: ["README.md", "NOAI.md", "robots.txt", "AGENTS.md", "LICENSE"],
+      main: "readme"
     ]
   end
 

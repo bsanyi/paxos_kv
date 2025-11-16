@@ -1,5 +1,10 @@
 defmodule PaxosKV do
-  @moduledoc "README.md" |> File.read!() |> String.replace(~r/^# PaxosKV/, "")
+  @moduledoc """
+  `PaxosKV` is the main API module. Most of the time you should interact with
+  the application via functions in this module.
+
+  The most important function you need to know is `PaxosKV.put`.
+  """
 
   alias PaxosKV.{Helpers, Proposer, Learner}
 

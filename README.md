@@ -49,6 +49,7 @@ following commands instead:
 If you're keen on speed and want to get up and running quickly, you can write
 underscores instead of node numbers when creating new nodes. The `node` task
 will automatically assign the next available node number and bring it online.
+Automatic numbering starts with 1.
 
     $ iex -S mix node _
     $ mix node _

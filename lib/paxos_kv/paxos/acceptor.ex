@@ -15,6 +15,12 @@ defmodule PaxosKV.Acceptor do
     multi_call(nodes, bucket, {:accept, key, id, value})
   end
 
+  def keys(nodes, bucket) do
+    multi_call(nodes, bucket, :keys)
+    |> List.flatten()
+    |> Enum.uniq()
+  end
+
   @doc """
   Collects a list of accepted `{id, value}` pairs from the acceptors.
   """
@@ -39,6 +45,8 @@ defmodule PaxosKV.Acceptor do
   use GenServer
 
   defmodule BasicPaxosState do
+    @moduledoc false
+
     defstruct min_proposal: 0,
               accepted?: false,
               accepted_id: nil,
@@ -46,6 +54,8 @@ defmodule PaxosKV.Acceptor do
   end
 
   defmodule State do
+    @moduledoc false
+
     defstruct bucket: nil,
               pid_monitors: %{},
               node_monitors: %{},
@@ -71,14 +81,18 @@ defmodule PaxosKV.Acceptor do
       id <= basic_state.min_proposal ->
         {:reply, {:nack, basic_state.min_proposal}, state}
 
-      basic_state.accepted? ->
-        basic_state
-        |> Map.put(:min_proposal, id)
+      basic_state.accepted? and Helpers.still_valid?(basic_state.accepted_value) ->
+        %{basic_state | min_proposal: id}
         |> reply(key, state, {:promise, basic_state.accepted_id, basic_state.accepted_value})
 
+      basic_state.accepted? ->
+        new_state = delete_keys(state, [key])
+
+        %BasicPaxosState{min_proposal: id}
+        |> reply(key, new_state, :promise)
+
       true ->
-        basic_state
-        |> Map.put(:min_proposal, id)
+        %BasicPaxosState{min_proposal: id}
         |> reply(key, state, :promise)
     end
   end
@@ -92,7 +106,8 @@ defmodule PaxosKV.Acceptor do
         {:reply, {:nack, basic_state.min_proposal}, state}
 
       not Helpers.still_valid?(value) ->
-        {:reply, {:nack, id}, %{state | basic_states: Map.delete(state.basic_states, key)}}
+        new_state = delete_keys(state, [key])
+        {:reply, {:nack, id}, new_state}
 
       true ->
         Learner.accepted(Node.self(), state.bucket, key, id, value)
@@ -115,11 +130,22 @@ defmodule PaxosKV.Acceptor do
 
         basic_state
         |> Map.merge(%{accepted?: true, accepted_id: id, accepted_value: value, min_proposal: id})
-        |> reply(key, Map.merge(state, %{pid_monitors: new_pid_monitors, node_monitors: new_node_monitors}), :accepted)
+        |> reply(
+          key,
+          Map.merge(state, %{pid_monitors: new_pid_monitors, node_monitors: new_node_monitors}),
+          :accepted
+        )
     end
   end
 
+  def handle_call(:keys, _from, state) do
+    # state = handle_priority_messages(state)
+    {:reply, Map.keys(state.basic_states), state}
+  end
+
   def handle_call({:info, key}, _from, state) do
+    state = handle_priority_messages(state)
+
     case Map.get(state.basic_states, key) do
       %BasicPaxosState{accepted?: true} = basic_state ->
         {:reply, {basic_state.accepted_id, basic_state.accepted_value}, state}
@@ -134,21 +160,7 @@ defmodule PaxosKV.Acceptor do
     if Map.has_key?(state.pid_monitors, ref) do
       key = state.pid_monitors[ref]
 
-      new_pid_monitors = Map.delete(state.pid_monitors, ref)
-      new_basic_states = Map.delete(state.basic_states, key)
-
-      new_node_monitors =
-        for {k, v} <- state.node_monitors, into: %{} do
-          {k, Enum.filter(v, &(&1 != key))}
-        end
-
-      {:noreply,
-       %{
-         state
-         | pid_monitors: new_pid_monitors,
-           node_monitors: new_node_monitors,
-           basic_states: new_basic_states
-       }}
+      {:noreply, delete_keys(state, [key])}
     else
       # should not happen
       {:noreply, state}
@@ -162,16 +174,7 @@ defmodule PaxosKV.Acceptor do
   def handle_info(Msg.nodedown(node), state) do
     keys = Map.get(state.node_monitors, node, [])
 
-    new_pid_monitors = Map.reject(state.pid_monitors, fn {_key, value} -> value in keys end)
-    new_basic_states = Map.drop(state.basic_states, keys)
-
-    {:noreply,
-     %{
-       state
-       | pid_monitors: new_pid_monitors,
-         node_monitors: Map.delete(state.node_monitors, node),
-         basic_states: new_basic_states
-     }}
+    {:noreply, delete_keys(state, keys)}
   end
 
   ###################################
@@ -185,6 +188,30 @@ defmodule PaxosKV.Acceptor do
     name = Module.concat(bucket, @name)
     {responses, _bad_nodes} = GenServer.multi_call(nodes, name, message)
     Enum.map(responses, fn {_node, response} -> response end)
+  end
+
+  defp delete_keys(state, keys) do
+    basic_states = Map.drop(state.basic_states, keys)
+
+    for {ref, key} <- state.pid_monitors, key in keys do
+      Process.demonitor(ref, [:flush])
+    end
+
+    pid_monitors = Map.reject(state.pid_monitors, fn {_ref, key} -> key in keys end)
+
+    node_monitors =
+      for {k, v} <- state.node_monitors do
+        {k, Enum.reject(v, &(&1 in keys))}
+      end
+      |> Enum.reject(&match?({_, []}, &1))
+      |> Enum.into(%{})
+
+    %{
+      state
+      | pid_monitors: pid_monitors,
+        node_monitors: node_monitors,
+        basic_states: basic_states
+    }
   end
 
   defp handle_priority_messages(state) do

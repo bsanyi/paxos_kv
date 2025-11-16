@@ -21,7 +21,9 @@ defmodule PaxosKVTest do
   end
 
   defp peer(node) do
-    {:ok, pid, _node} = :peer.start_link(%{name: node, longnames: true, connection: 0, shutdown: :close})
+    {:ok, pid, _node} =
+      :peer.start_link(%{name: node, longnames: true, connection: 0, shutdown: :close})
+
     remote_paths = call(pid, :code, :get_path, [])
 
     for path <- :code.get_path(), path not in remote_paths do
@@ -75,7 +77,9 @@ defmodule PaxosKVTest do
 
   test "key is deleted when associated node goes down" do
     node = Mix.Tasks.Node.node_name(4)
-    {:ok, node4, _} = :peer.start_link(%{name: node, longnames: true, connection: 0, shutdown: :close})
+
+    {:ok, node4, _} =
+      :peer.start_link(%{name: node, longnames: true, connection: 0, shutdown: :close})
 
     {pid, _ref} = spawn_monitor(fn -> Process.sleep(:infinity) end)
     {pid2, _ref} = spawn_monitor(fn -> Process.sleep(:infinity) end)

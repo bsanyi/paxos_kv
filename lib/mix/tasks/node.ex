@@ -32,6 +32,14 @@ defmodule Mix.Tasks.Node do
     $ mix node 3
   ```
 
+  It is also possible to start nodes without manually entering numbers for them.
+  Use an underscore `_` in place of the node number and the node task will find
+  you the first available node number starting from 1:
+
+  ```bash
+    $ iex -S mix node _
+  ```
+
   You can use an underscore to start a node without specifying the node number.
   In that case the task is going to figure out the smallest available node number
   and use that number.
@@ -77,8 +85,8 @@ defmodule Mix.Tasks.Node do
         |> String.trim_leading("node")
       end)
 
-    0
-    |> Stream.iterate(& &1 + 1)
+    1
+    |> Stream.iterate(&(&1 + 1))
     |> Enum.find(fn num -> to_string(num) not in available_node_numbers end)
   end
 
@@ -86,6 +94,7 @@ defmodule Mix.Tasks.Node do
     String.to_integer(node_number)
   end
 
+  @doc "Returns the node name of the `n`th node."
   def node_name(n) do
     {fqdn, 0} = System.cmd("hostname", ["-f"])
     :"node#{n}@#{String.trim(fqdn)}"

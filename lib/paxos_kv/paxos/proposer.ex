@@ -107,7 +107,7 @@ defmodule PaxosKV.Proposer do
   ###################################
   ####  Helpers
 
-  #`primary_node(key)` choses a node for the `key`.
+  # `primary_node(key)` choses a node for the `key`.
   #
   # When there are too many retries - that means more than one Proposer tries
   # to convince the cluster about a value, and there is a long race between

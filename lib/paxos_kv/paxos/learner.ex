@@ -113,7 +113,7 @@ defmodule PaxosKV.Learner do
 
           [{id, value} | _] = accepteds ->
             accepteds
-            |> Enum.filter(& &1 == {id, value})
+            |> Enum.filter(&(&1 == {id, value}))
             |> Helpers.quorum?(Cluster.cluster_size())
             |> if do
               {:reply, {:ok, value}, state}
@@ -153,7 +153,13 @@ defmodule PaxosKV.Learner do
           {state.pid_monitors, state.node_monitors}
       end
 
-    {:noreply, %{state | pid_monitors: pid_monitors, node_monitors: node_monitors, cache: Map.put(state.cache, key, value)}}
+    {:noreply,
+     %{
+       state
+       | pid_monitors: pid_monitors,
+         node_monitors: node_monitors,
+         cache: Map.put(state.cache, key, value)
+     }}
   end
 
   @impl true
@@ -163,6 +169,7 @@ defmodule PaxosKV.Learner do
       votes = Map.delete(state.votes, key)
       cache = Map.delete(state.cache, key)
       pid_monitors = Map.delete(state.pid_monitors, ref)
+
       node_monitors =
         state.node_monitors
         |> Enum.flat_map(fn {node, keys} ->
@@ -174,7 +181,14 @@ defmodule PaxosKV.Learner do
         end)
         |> Enum.into(%{})
 
-      {:noreply, %{state | votes: votes, pid_monitors: pid_monitors, node_monitors: node_monitors, cache: cache}}
+      {:noreply,
+       %{
+         state
+         | votes: votes,
+           pid_monitors: pid_monitors,
+           node_monitors: node_monitors,
+           cache: cache
+       }}
     else
       {:noreply, state}
     end
@@ -193,7 +207,14 @@ defmodule PaxosKV.Learner do
       node_monitors = Map.delete(state.node_monitors, node)
       pid_monitors = Map.reject(state.pid_monitors, fn {_key, value} -> value == 2 end)
 
-      {:noreply, %{state | votes: votes, pid_monitors: pid_monitors, node_monitors: node_monitors, cache: cache}}
+      {:noreply,
+       %{
+         state
+         | votes: votes,
+           pid_monitors: pid_monitors,
+           node_monitors: node_monitors,
+           cache: cache
+       }}
     else
       {:noreply, state}
     end
