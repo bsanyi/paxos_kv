@@ -20,13 +20,13 @@ defmodule PaxosKV.Proposer do
   - `{:error, :invalid_value}`: the `pid` or `node` provided in `opts` is not alive
   """
   def propose(key, value, opts) do
-    {_bucket, name} = Helpers.name(opts, @name)
-    value = {value, opts |> Enum.into(%{}) |> Map.take([:pid, :node])}
-    __propose(name, key, value)
+    {bucket, name} = Helpers.name(opts, @name)
+    value = {value, opts |> Enum.into(%{}) |> Map.take([:pid, :node, :key, :until])}
+    __propose(name, key, value, bucket)
   end
 
-  defp __propose(name, key, value) do
-    if Helpers.still_valid?(value) do
+  defp __propose(name, key, value, bucket) do
+    if still_valid?(value, bucket) do
       case GenServer.call(name, {:propose, key, value}) do
         {:ok, _value} = response ->
           response
@@ -36,11 +36,11 @@ defmodule PaxosKV.Proposer do
 
         {:error, :too_many_rounds} when is_atom(name) ->
           # redirect to the proposer on the primary node in order to serialize requests
-          __propose({name, primary_node(key)}, key, value)
+          __propose({name, primary_node(key)}, key, value, bucket)
 
         {:error, :too_many_rounds} when is_tuple(name) ->
           # we already falled back to the primary proposer => all we need to do is just retry
-          __propose(name, key, value)
+          __propose(name, key, value, bucket)
       end
     else
       {:error, :invalid_value}
@@ -172,4 +172,14 @@ defmodule PaxosKV.Proposer do
   end
 
   defp inc({n, _node}), do: {n + 1, Node.self()}
+
+  defp still_valid?({_, %{key: key}} = value, bucket) do
+    if Helpers.still_valid?(value) do
+      !! PaxosKV.get(key, bucket: bucket)
+    else
+      false
+    end
+  end
+
+  defp still_valid?(value, _bucket), do: Helpers.still_valid?(value)
 end

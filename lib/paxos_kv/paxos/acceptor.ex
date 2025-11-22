@@ -59,6 +59,7 @@ defmodule PaxosKV.Acceptor do
     defstruct bucket: nil,
               pid_monitors: %{},
               node_monitors: %{},
+              keys: %{},
               basic_states: %{}
   end
 
@@ -81,7 +82,7 @@ defmodule PaxosKV.Acceptor do
       id <= basic_state.min_proposal ->
         {:reply, {:nack, basic_state.min_proposal}, state}
 
-      basic_state.accepted? and Helpers.still_valid?(basic_state.accepted_value) ->
+      basic_state.accepted? and still_valid?(basic_state.accepted_value, state.basic_states) ->
         %{basic_state | min_proposal: id}
         |> reply(key, state, {:promise, basic_state.accepted_id, basic_state.accepted_value})
 
@@ -105,36 +106,22 @@ defmodule PaxosKV.Acceptor do
       id < basic_state.min_proposal ->
         {:reply, {:nack, basic_state.min_proposal}, state}
 
-      not Helpers.still_valid?(value) ->
+      not still_valid?(value, state.basic_states) ->
         new_state = delete_keys(state, [key])
         {:reply, {:nack, id}, new_state}
 
       true ->
         Learner.accepted(Node.self(), state.bucket, key, id, value)
 
-        {new_pid_monitors, new_node_monitors} =
-          case value do
-            {_, %{pid: pid, node: node}} ->
-              {Helpers.monitor_pid(pid, key, state.pid_monitors),
-               Helpers.monitor_node(node, key, state.node_monitors)}
-
-            {_, %{pid: pid}} ->
-              {Helpers.monitor_pid(pid, key, state.pid_monitors), state.node_monitors}
-
-            {_, %{node: node}} ->
-              {state.pid_monitors, Helpers.monitor_node(node, key, state.node_monitors)}
-
-            _ ->
-              {state.pid_monitors, state.node_monitors}
-          end
+        new_state =
+          state
+          |> add_pid_monitor(key, value)
+          |> add_node_monitor(key, value)
+          |> add_key_monitor(key, value)
 
         basic_state
         |> Map.merge(%{accepted?: true, accepted_id: id, accepted_value: value, min_proposal: id})
-        |> reply(
-          key,
-          Map.merge(state, %{pid_monitors: new_pid_monitors, node_monitors: new_node_monitors}),
-          :accepted
-        )
+        |> reply(key, new_state, :accepted)
     end
   end
 
@@ -190,6 +177,45 @@ defmodule PaxosKV.Acceptor do
     Enum.map(responses, fn {_node, response} -> response end)
   end
 
+  defp add_pid_monitor(state, key, {_value, meta}) do
+    if pid = Map.get(meta, :pid) do
+      %{state | pid_monitors: Helpers.monitor_pid(pid, key, state.pid_monitors)}
+    else
+      state
+    end
+  end
+
+  defp add_node_monitor(state, key, {_value, meta}) do
+    if node = Map.get(meta, :node) do
+      %{state | node_monitors: Helpers.monitor_node(node, key, state.node_monitors)}
+    else
+      state
+    end
+  end
+
+  defp add_key_monitor(state, key, {_value, meta}) do
+    xkey = Map.get(meta, :key)
+
+    if xkey && key != xkey do
+      %{state | keys: Helpers.monitor_key(xkey, key, state.keys)}
+    else
+      state
+    end
+  end
+
+  defp still_valid?({_, %{key: key}} = value, basic_states) do
+    basic_state = basic_states[key]
+    if Helpers.still_valid?(value) and !!basic_state and basic_state.accepted? do
+      still_valid?(basic_state.accepted_value, basic_states)
+    else
+      false
+    end
+  end
+
+  defp still_valid?(value, _basic_states), do: Helpers.still_valid?(value)
+
+  defp delete_keys(state, []), do: state
+
   defp delete_keys(state, keys) do
     basic_states = Map.drop(state.basic_states, keys)
 
@@ -206,12 +232,18 @@ defmodule PaxosKV.Acceptor do
       |> Enum.reject(&match?({_, []}, &1))
       |> Enum.into(%{})
 
-    %{
-      state
-      | pid_monitors: pid_monitors,
-        node_monitors: node_monitors,
-        basic_states: basic_states
-    }
+    {key_refs, new_keys} = Map.split(state.keys, keys)
+
+    new_state =
+      %{
+        state
+        | pid_monitors: pid_monitors,
+          node_monitors: node_monitors,
+          keys: new_keys,
+          basic_states: basic_states
+      }
+
+    delete_keys(new_state, List.flatten(Map.values(key_refs)))
   end
 
   defp handle_priority_messages(state) do

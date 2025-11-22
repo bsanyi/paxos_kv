@@ -20,6 +20,8 @@ defmodule PaxosKV do
   * `bucket: b` -- use bucket `b` to store the key-value pair
   * `pid: p` -- keep the key-value pair as long as pid `p` is alive
   * `node: n` -- keep the key-value pair as long as node `n` is connected
+  * `key: k` -- keep the key-value pair as long as key `k` present
+  * `until: u` -- keep the key-value pair until system time `u` (milliseconds)
   * `no_quorum: :retry | :fail | :return` -- Try again, crash or just return an
     error tuple when there's no quorum.
 
@@ -28,12 +30,14 @@ defmodule PaxosKV do
   `PaxosKV.put` function, it can be a value proposed by another process. It can
   also return `{:error, reason}`, when something goes wrong.
 
-  `{:error, :no_quorum}` means the cluster does not have enough nodes. In order to
-  make a decision / reach consensus, more than `cluster_size / 2` nodes have to
-  be part of the cluster. (Cluster size is a config param.) The option `:no_quorum`
-  can change the behavior of `put`. Whern set to `:retry`, it won't return this
-  tuple, but it will try again and again until it can reach enough nodes. The
-  option `no_quorum: :fail` will generate an exception instead.
+  `{:error, :no_quorum}` means the cluster does not have enough nodes. In order
+  to make a decision / reach consensus, more than `cluster_size / 2` nodes have
+  to be part of the cluster. (Cluster size is a config param.) The option
+  `:no_quorum` can change the behavior of `put`. Whern set to `:retry`, it
+  won't return this tuple, but it will try again and again until it can reach
+  enough nodes. The option `no_quorum: :fail` will generate an exception
+  instead.
+
   """
   def put(key, value, opts \\ []) do
     case Proposer.propose(key, value, opts) do

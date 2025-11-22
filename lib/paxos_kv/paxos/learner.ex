@@ -98,7 +98,7 @@ defmodule PaxosKV.Learner do
       not Cluster.quorum?() ->
         {:reply, :retry, state}
 
-      Map.has_key?(state.cache, key) and Helpers.still_valid?(cached_value) ->
+      Map.has_key?(state.cache, key) and still_valid?(cached_value, state.cache) ->
         {:reply, {:ok, cached_value}, state}
 
       true ->
@@ -106,7 +106,7 @@ defmodule PaxosKV.Learner do
 
         key
         |> Acceptor.info(state.bucket)
-        |> Enum.filter(&Helpers.still_valid?/1)
+        |> Enum.filter(fn {_id, value} -> still_valid?(value, state.cache) end)
         |> case do
           [] ->
             {:reply, {:error, :not_found}, state}
@@ -222,6 +222,16 @@ defmodule PaxosKV.Learner do
 
   ############################################
   ####  Helpers
+
+  defp still_valid?({_, %{key: key}} = value, cache) do
+    if Helpers.still_valid?(value) and Map.has_key?(cache, key) do
+        still_valid?(cache[key], cache)
+    else
+      false
+    end
+  end
+
+  defp still_valid?(value, _cache), do: Helpers.still_valid?(value)
 
   defp quorum_accepts?(votes, id, value, n) do
     votes

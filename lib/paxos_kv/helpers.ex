@@ -2,6 +2,12 @@ defmodule PaxosKV.Helpers do
   @moduledoc false
 
   @doc """
+  Returns the current time that can be used in the `until: ...` option.
+  The time is measured in milliseconds and is actually the system time.
+  """
+  def now, do: System.system_time(:millisecond)
+
+  @doc """
   This is a syncronization function. It blocks the caller until the `predicate`
   function returns a truthy value (anything but `nil` or `false`).
   """
@@ -62,6 +68,14 @@ defmodule PaxosKV.Helpers do
     end
   end
 
+  def monitor_key(xkey, key, monitors) do
+    if xkey do
+      Map.update(monitors, xkey, [key], &Enum.uniq([key | &1]))
+    else
+      monitors
+    end
+  end
+
   @doc """
   Takes a list of messages and eliminates all the messages from the process mailbox.
   """
@@ -86,10 +100,24 @@ defmodule PaxosKV.Helpers do
     {bucket, Module.concat(bucket, bucket_suffix)}
   end
 
-  def still_valid?({_, %{pid: pid, node: node}}), do: process_alive?(pid) and node_alive?(node)
-  def still_valid?({_, %{pid: pid}}), do: process_alive?(pid)
-  def still_valid?({_, %{node: node}}), do: node_alive?(node)
-  def still_valid?(_), do: true
+  def still_valid?({_, meta}) do
+    true &&
+      validate_pid(meta) &&
+      validate_node(meta) &&
+      # validate_key(meta) &&
+      validate_until(meta)
+  catch
+    _ -> false
+  end
+
+  defp validate_pid(%{pid: pid}), do: process_alive?(pid)
+  defp validate_pid(_), do: true
+
+  defp validate_node(%{node: node}), do: node_alive?(node)
+  defp validate_node(_), do: true
+
+  defp validate_until(%{until: time}), do: time >= now()
+  defp validate_until(_), do: true
 
   def process_alive?(pid) when is_pid(pid) do
     node = :erlang.node(pid)

@@ -4,10 +4,19 @@ defmodule PaxosKVTest do
   require PaxosKV.Helpers.Msg, as: Msg
 
   setup_all do
+    System.cmd("epmd", ["-daemon", "-relaxed_command_check"])
+
     ##  Restart the origin node with longnames:
     Application.stop(:paxos_kv)
     Node.start(:node1, :longnames)
     Application.start(:paxos_kv)
+
+    if Node.self() == :nonode@nohost or not match?({:ok, [{~c"node1", _port}]}, :net_adm.names()) do
+      IO.puts :stderr, "\n\nSeems like another node is running."
+      IO.puts :stderr, "Please stop is before running tests."
+      assert {:ok, [{~c"node1", _port}]} = :net_adm.names()
+      System.halt(1)
+    end
 
     ##  Start two more peers and connect to them:
     node2 = peer(:node2)
@@ -121,6 +130,30 @@ defmodule PaxosKVTest do
     assert PaxosKV.get(:monitored_2) == 2 * value
 
     assert PaxosKV.get(:monitored_3) == value + 1
+  end
+
+  test "entry can depend on another key" do
+    assert {:error, :invalid_value} = PaxosKV.put(:key1, :value1, key: NON_EXISTENT_KEY)
+    pid = spawn(fn -> Process.sleep(:infinity) end)
+    assert {:ok, :value1} == PaxosKV.put(:key1, :value1, pid: pid)
+    assert {:ok, :value2} == PaxosKV.put(:key2, :value2, key: :key1)
+    assert :value1 == PaxosKV.get(:key1)
+    assert :value2 == PaxosKV.get(:key2)
+    Process.exit(pid, :kill)
+    assert nil == PaxosKV.get(:key1)
+    assert nil == PaxosKV.get(:key2)
+    assert {:ok, :value3} == PaxosKV.put(:key2, :value3)
+  end
+
+  test "KV pairs can have a due date" do
+    value = "value"
+    other_value = value <> "2"
+    assert {:error, :invalid_value} == PaxosKV.put(:until1, value, until: Helpers.now() - 1)
+    assert {:ok, value} == PaxosKV.put(:until2, value, until: Helpers.now() + 200)
+    assert value == PaxosKV.get(:until2)
+    Process.sleep(201)
+    assert nil == PaxosKV.get(:until2)
+    assert {:ok, other_value} == PaxosKV.put(:until2, other_value, until: Helpers.now() + :timer.seconds(2))
   end
 
   test "reaches consensus", %{node2: node2, node3: node3} do
