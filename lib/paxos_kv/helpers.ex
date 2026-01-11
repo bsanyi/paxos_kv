@@ -104,7 +104,6 @@ defmodule PaxosKV.Helpers do
     true &&
       validate_pid(meta) &&
       validate_node(meta) &&
-      # validate_key(meta) &&
       validate_until(meta)
   catch
     _ -> false

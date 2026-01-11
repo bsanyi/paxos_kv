@@ -20,27 +20,30 @@ defmodule PaxosKV.Proposer do
   - `{:error, :invalid_value}`: the `pid` or `node` provided in `opts` is not alive
   """
   def propose(key, value, opts) do
-    {bucket, name} = Helpers.name(opts, @name)
+    {_bucket, name} = Helpers.name(opts, @name)
     value = {value, opts |> Enum.into(%{}) |> Map.take([:pid, :node, :key, :until])}
-    __propose(name, key, value, bucket)
+    __propose(name, key, value)
   end
 
-  defp __propose(name, key, value, bucket) do
-    if still_valid?(value, bucket) do
-      case GenServer.call(name, {:propose, key, value}) do
+  defp __propose(name, key, value) do
+    if Helpers.still_valid?(value) do
+      case GenServer.call(name, {:propose, key, value}, _timeout = :infinity) do
         {:ok, _value} = response ->
           response
 
         {:error, :no_quorum} = response ->
           response
 
+        {:error, :invalid_value} = response ->
+          response
+
         {:error, :too_many_rounds} when is_atom(name) ->
           # redirect to the proposer on the primary node in order to serialize requests
-          __propose({name, primary_node(key)}, key, value, bucket)
+          __propose({name, primary_node(key)}, key, value)
 
         {:error, :too_many_rounds} when is_tuple(name) ->
           # we already falled back to the primary proposer => all we need to do is just retry
-          __propose(name, key, value, bucket)
+          __propose(name, key, value)
       end
     else
       {:error, :invalid_value}
@@ -61,12 +64,12 @@ defmodule PaxosKV.Proposer do
   use GenServer
 
   defmodule State do
-    defstruct [:id, :bucket]
+    defstruct [:id, :bucket, :redirects]
   end
 
   @impl true
   def init(bucket) do
-    {:ok, %State{bucket: bucket, id: {0, Node.self()}}}
+    {:ok, %State{bucket: bucket, id: {0, Node.self()}, redirects: %{}}}
   end
 
   @impl true
@@ -75,6 +78,8 @@ defmodule PaxosKV.Proposer do
   end
 
   def handle_call({:propose, key, value}, from, state, try_round \\ 1) do
+    state = check_redirects(state, key)
+
     {nodes, n} = Cluster.nodes_and_cluster_size()
 
     value =
@@ -89,6 +94,7 @@ defmodule PaxosKV.Proposer do
     |> Acceptor.accept(state.bucket, state.id, key, value)
     |> check_quorum(n)
     |> check_nacks(1)
+    |> check_invalid(n)
 
     Learner.chosen(state.bucket, key, value)
 
@@ -97,11 +103,23 @@ defmodule PaxosKV.Proposer do
     :no_quorum ->
       {:reply, {:error, :no_quorum}, %{state | id: inc(state.id)}}
 
+    :invalid_value ->
+      {:reply, {:error, :invalid_value}, %{state | id: inc(state.id)}}
+
+    :redirect ->
+      {:reply, {:error, :too_many_rounds}, state}
+
     {:nack, id, try_increment} when try_round <= 3 ->
       handle_call({:propose, key, value}, from, %{state | id: inc(id)}, try_round + try_increment)
 
     {:nack, id, _} ->
-      {:reply, {:error, :too_many_rounds}, %{state | id: inc(id)}}
+      if primary_node(key) == Node.self() do
+        handle_call({:propose, key, value}, from, %{state | id: inc(id)}, try_round)
+      else
+        t = System.system_time(:millisecond) + :timer.seconds(5)
+        new_state = %{state | id: inc(id), redirects: Map.put(state.redirects, key, t)}
+        {:reply, {:error, :too_many_rounds}, new_state}
+      end
   end
 
   ###################################
@@ -152,6 +170,15 @@ defmodule PaxosKV.Proposer do
     end
   end
 
+  # Checks if the quorum of the `responses` is `:invalid_value`. If so, it
+  # throws an exception, otherwise just returns.
+  defp check_invalid(responses, n) do
+    responses
+    |> Enum.filter(fn x -> x == :invalid_value end)
+    |> Helpers.quorum?(n)
+    |> Kernel.and(throw(:invalid_value))
+  end
+
   # `accept_value(responses, orig_value)` is called with the list of Acceptor
   # responses from the prepare phase of Paxos. If there are `{:promise, id,
   # value}` responses in the list, this function returns the `value` with the
@@ -171,15 +198,20 @@ defmodule PaxosKV.Proposer do
     end
   end
 
-  defp inc({n, _node}), do: {n + 1, Node.self()}
+  defp check_redirects(state, key) do
+    t = state.redirects[key]
 
-  defp still_valid?({_, %{key: key}} = value, bucket) do
-    if Helpers.still_valid?(value) do
-      !! PaxosKV.get(key, bucket: bucket)
-    else
-      false
+    cond do
+      !!t and t <= System.system_time(:millisecond) ->
+        throw(:redirect)
+
+      !!t ->
+        %{state | redirects: Map.delete(state.redirects, key)}
+
+      true ->
+        state
     end
   end
 
-  defp still_valid?(value, _bucket), do: Helpers.still_valid?(value)
+  defp inc({n, _node}), do: {n + 1, Node.self()}
 end

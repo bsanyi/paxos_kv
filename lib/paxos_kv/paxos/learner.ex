@@ -20,23 +20,27 @@ defmodule PaxosKV.Learner do
   """
   def get(key, opts) do
     {_bucket, name} = Helpers.name(opts, @name)
+    no_quorum = Keyword.get(opts, :on_quorum, :return)
 
     case GenServer.call(name, {:get, key}) do
-      {:ok, value} ->
-        value
+      {:ok, _value} = ok ->
+        ok
 
       {:try, {value, meta}} ->
-        case Proposer.propose(key, value, Keyword.merge(opts, Map.to_list(meta))) do
-          {:ok, value} -> value
-          {:error, :invalid_value} -> nil
-        end
+        Proposer.propose(key, value, Keyword.merge(opts, Map.to_list(meta)))
 
-      :retry ->
+      {:error, :no_quorum} when no_quorum == :retry ->
         Helpers.random_backoff()
         get(key, opts)
 
-      {:error, :not_found} ->
-        nil
+      {:error, :no_quorum} when no_quorum == :fail ->
+        throw(:no_quorum)
+
+      {:error, :no_quorum} = error when no_quorum == :return ->
+        error
+
+      {:error, :not_found} = error ->
+        error
     end
   end
 
@@ -96,7 +100,7 @@ defmodule PaxosKV.Learner do
 
     cond do
       not Cluster.quorum?() ->
-        {:reply, :retry, state}
+        {:reply, {:error, :no_quorum}, state}
 
       Map.has_key?(state.cache, key) and still_valid?(cached_value, state.cache) ->
         {:reply, {:ok, cached_value}, state}

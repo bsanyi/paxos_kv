@@ -4,11 +4,14 @@ defmodule PaxosKVTest do
   require PaxosKV.Helpers.Msg, as: Msg
 
   setup_all do
-    System.cmd("epmd", ["-daemon", "-relaxed_command_check"])
+    TestHelper.init_epmd()
 
     ##  Restart the origin node with longnames:
     Application.stop(:paxos_kv)
-    Node.start(:node1, :longnames)
+    TestHelper.retry(fn ->
+      Node.stop()
+      Node.start(:node1, :longnames)
+    end)
     Application.start(:paxos_kv)
 
     if Node.self() == :nonode@nohost or not match?({:ok, [{~c"node1", _port}]}, :net_adm.names()) do
@@ -19,35 +22,20 @@ defmodule PaxosKVTest do
     end
 
     ##  Start two more peers and connect to them:
-    node2 = peer(:node2)
-    node3 = peer(:node3)
+    node2 = TestHelper.peer(:node2, 3)
+    node3 = TestHelper.peer(:node3, 3)
 
     ##  Give some prepare time to the peers:
-    Helpers.wait_for(fn -> call(node2, PaxosKV.Cluster, :ping, []) == :pong end)
-    Helpers.wait_for(fn -> call(node3, PaxosKV.Cluster, :ping, []) == :pong end)
+    Helpers.wait_for(fn -> TestHelper.call(node2, PaxosKV.Cluster, :quorum?, []) == true end)
+    Helpers.wait_for(fn -> TestHelper.call(node3, PaxosKV.Cluster, :quorum?, []) == true end)
+
+    on_exit(fn ->
+      TestHelper.tear_down(node2)
+      TestHelper.tear_down(node3)
+      Node.stop()
+    end)
 
     [node1: Node.self(), node2: node2, node3: node3]
-  end
-
-  defp peer(node) do
-    {:ok, pid, _node} =
-      :peer.start_link(%{name: node, longnames: true, connection: 0, shutdown: :close})
-
-    remote_paths = call(pid, :code, :get_path, [])
-
-    for path <- :code.get_path(), path not in remote_paths do
-      call(pid, :code, :add_patha, [path])
-    end
-
-    for app <- ~w[compiler elixir logger runtime_tools wx observer paxos_kv]a do
-      call(pid, :application, :ensure_started, [app])
-    end
-
-    call(pid, Logger, :configure, [[level: :error]])
-
-    call(pid, Node, :connect, [Node.self()])
-
-    pid
   end
 
   test "key is deleted when associated pid dies" do
@@ -56,21 +44,21 @@ defmodule PaxosKVTest do
 
       assert PaxosKV.put(key, value, pid: pid) == {:ok, value}
 
-      assert PaxosKV.get(key) == value
-      assert PaxosKV.pid(key) == pid
+      assert PaxosKV.get(key) == {:ok, value}
+      assert PaxosKV.pid(key) == {:ok, pid}
 
       Process.exit(pid, :kill)
 
       assert_receive Msg.monitor_down(ref: _, type: :process, pid: ^pid, reason: _), 1_000
 
       if Enum.random([0, 1]) == 1 do
-        assert PaxosKV.get(key, default: {:default, i}) == {:default, i}
-        assert PaxosKV.pid(key) == nil
+        assert PaxosKV.get(key, default: {:default, i}) == {:ok, {:default, i}}
+        assert PaxosKV.pid(key) == {:error, :not_found}
       end
 
       assert PaxosKV.put(key, -value, pid: self()) == {:ok, -value}
-      assert PaxosKV.get(key) == -value
-      assert PaxosKV.pid(key) == self()
+      assert PaxosKV.get(key) == {:ok, -value}
+      assert PaxosKV.pid(key) == {:ok, self()}
     end
   end
 
@@ -101,35 +89,35 @@ defmodule PaxosKVTest do
     Process.exit(pid2, :kill)
     assert_receive Msg.monitor_down(ref: _, type: :process, pid: ^pid2, reason: _), 1_000
 
-    assert PaxosKV.get(:monitored_3, default: :default_3) == :default_3
+    assert PaxosKV.get(:monitored_3, default: :default_3) == {:ok, :default_3}
     assert {:ok, value + 1} == PaxosKV.put(:monitored_3, value + 1)
 
-    assert PaxosKV.get(:monitored_1) == value
-    assert PaxosKV.get(:monitored_2) == value
-    assert PaxosKV.get(:monitored_1) == value
-    assert PaxosKV.get(:monitored_2) == value
-    assert PaxosKV.get(:monitored_1) == value
-    assert PaxosKV.get(:monitored_2) == value
-    assert PaxosKV.node(:monitored_1) == node
-    assert PaxosKV.node(:monitored_2) == node
-    assert PaxosKV.pid(:monitored_2) == pid
+    assert PaxosKV.get(:monitored_1) == {:ok, value}
+    assert PaxosKV.get(:monitored_2) == {:ok, value}
+    assert PaxosKV.get(:monitored_1) == {:ok, value}
+    assert PaxosKV.get(:monitored_2) == {:ok, value}
+    assert PaxosKV.get(:monitored_1) == {:ok, value}
+    assert PaxosKV.get(:monitored_2) == {:ok, value}
+    assert PaxosKV.node(:monitored_1) == {:ok, node}
+    assert PaxosKV.node(:monitored_2) == {:ok, node}
+    assert PaxosKV.pid(:monitored_2) == {:ok, pid}
 
     :peer.stop(node4)
 
     # Give some time to `node4` to stop and to Acceptors to detect the `:nodedown` event:
     Process.sleep(100)
 
-    assert PaxosKV.get(:monitored_1, default: :default_1) == :default_1
-    assert PaxosKV.get(:monitored_2, default: :default_2) == :default_2
+    assert PaxosKV.get(:monitored_1, default: :default_1) == {:ok, :default_1}
+    assert PaxosKV.get(:monitored_2, default: :default_2) == {:ok, :default_2}
 
     PaxosKV.put(:monitored_2, 2 * value)
 
     Process.exit(pid, :kill)
     assert_receive Msg.monitor_down(ref: _, type: :process, pid: ^pid, reason: _), 1_000
 
-    assert PaxosKV.get(:monitored_2) == 2 * value
+    assert PaxosKV.get(:monitored_2) == {:ok, 2 * value}
 
-    assert PaxosKV.get(:monitored_3) == value + 1
+    assert PaxosKV.get(:monitored_3) == {:ok, value + 1}
   end
 
   test "entry can depend on another key" do
@@ -137,11 +125,11 @@ defmodule PaxosKVTest do
     pid = spawn(fn -> Process.sleep(:infinity) end)
     assert {:ok, :value1} == PaxosKV.put(:key1, :value1, pid: pid)
     assert {:ok, :value2} == PaxosKV.put(:key2, :value2, key: :key1)
-    assert :value1 == PaxosKV.get(:key1)
-    assert :value2 == PaxosKV.get(:key2)
+    assert {:ok, :value1} == PaxosKV.get(:key1)
+    assert {:ok, :value2} == PaxosKV.get(:key2)
     Process.exit(pid, :kill)
-    assert nil == PaxosKV.get(:key1)
-    assert nil == PaxosKV.get(:key2)
+    assert {:error, :not_found} == PaxosKV.get(:key1)
+    assert {:error, :not_found} == PaxosKV.get(:key2)
     assert {:ok, :value3} == PaxosKV.put(:key2, :value3)
   end
 
@@ -149,10 +137,12 @@ defmodule PaxosKVTest do
     value = "value"
     other_value = value <> "2"
     assert {:error, :invalid_value} == PaxosKV.put(:until1, value, until: Helpers.now() - 1)
-    assert {:ok, value} == PaxosKV.put(:until2, value, until: Helpers.now() + 200)
-    assert value == PaxosKV.get(:until2)
-    Process.sleep(201)
-    assert nil == PaxosKV.get(:until2)
+    :erlang.garbage_collect()
+    :erlang.yield()
+    assert {:ok, value} == PaxosKV.put(:until2, value, until: Helpers.now() + 50)
+    assert {:ok, value} == PaxosKV.get(:until2)
+    Process.sleep(50 + 1)
+    assert {:error, :not_found} == PaxosKV.get(:until2)
     assert {:ok, other_value} == PaxosKV.put(:until2, other_value, until: Helpers.now() + :timer.seconds(2))
   end
 
@@ -160,8 +150,8 @@ defmodule PaxosKVTest do
     for i <- 1..5, key = {{{i}}} do
       result =
         [
-          fn -> call(node3, PaxosKV, :put, [key, 3]) end,
-          fn -> call(node2, PaxosKV, :put, [key, 2]) end,
+          fn -> TestHelper.call(node3, PaxosKV, :put, [key, 3]) end,
+          fn -> TestHelper.call(node2, PaxosKV, :put, [key, 2]) end,
           fn -> PaxosKV.put(key, 1) end
         ]
         |> Task.async_stream(fn f -> f.() end, max_concurrency: 3, ordered: false)
@@ -176,8 +166,8 @@ defmodule PaxosKVTest do
     for bucket <- [Bucket1, Bucket2] do
       child = {PaxosKV.Bucket, bucket: bucket}
 
-      call(node3, Supervisor, :start_child, [PaxosKV.RootSup, child])
-      call(node2, Supervisor, :start_child, [PaxosKV.RootSup, child])
+      TestHelper.call(node3, Supervisor, :start_child, [PaxosKV.RootSup, child])
+      TestHelper.call(node2, Supervisor, :start_child, [PaxosKV.RootSup, child])
       Supervisor.start_child(PaxosKV.RootSup, child)
     end
 
@@ -192,9 +182,9 @@ defmodule PaxosKVTest do
     assert {:ok, value1} == PaxosKV.put(key, value1)
     assert {:ok, value2} == PaxosKV.put(key, value2, bucket: Bucket1)
     assert {:ok, value3} == PaxosKV.put(key, value3, bucket: Bucket2)
-    assert value1 == PaxosKV.get(key)
-    assert value2 == PaxosKV.get(key, bucket: Bucket1)
-    assert value3 == PaxosKV.get(key, bucket: Bucket2)
+    assert {:ok, value1} == PaxosKV.get(key)
+    assert {:ok, value2} == PaxosKV.get(key, bucket: Bucket1)
+    assert {:ok, value3} == PaxosKV.get(key, bucket: Bucket2)
   end
 
   test "cluster can be resized", %{node1: node1, node2: node2, node3: node3} do
@@ -234,14 +224,6 @@ defmodule PaxosKVTest do
   end
 
   defp cluster_sizes(nodes) do
-    Enum.map(nodes, &call(&1, PaxosKV.Cluster, :cluster_size, []))
-  end
-
-  defp call(node, m, f, a) do
-    if is_pid(node) do
-      :peer.call(node, m, f, a)
-    else
-      :erpc.call(node, m, f, a)
-    end
+    Enum.map(nodes, &TestHelper.call(&1, PaxosKV.Cluster, :cluster_size, []))
   end
 end

@@ -108,7 +108,7 @@ defmodule PaxosKV.Acceptor do
 
       not still_valid?(value, state.basic_states) ->
         new_state = delete_keys(state, [key])
-        {:reply, {:nack, id}, new_state}
+        {:reply, :invalid_value, new_state}
 
       true ->
         Learner.accepted(Node.self(), state.bucket, key, id, value)
@@ -154,7 +154,28 @@ defmodule PaxosKV.Acceptor do
     end
   end
 
-  def handle_info(Msg.nodeup(_node), state) do
+  @max_sync_keys 100
+
+  def handle_info(Msg.nodeup(node), state) do
+    # start_link ?
+    Task.start(fn ->
+      Helpers.wait_for(fn ->
+        (Node.ping(node) == :pong) &&
+          (:erpc.call(node, PaxosKV.Cluster, :ping, []) == :pong) &&
+          is_pid(:erpc.call(node, Process, :whereis, [__MODULE__]))
+      end)
+
+      if not Enum.empty?(state.basic_states) do
+        keys = Map.keys(state.basic_states)
+        total = length(keys)
+        count = ceil(total / @max_sync_keys)
+        base = div(total, count)
+        reminder = rem(total, count)
+        chunk_sizes = List.duplicate(base + 1, reminder) ++ List.duplicate(base, count - reminder)
+        sync_in_chunks(node, keys, state.basic_states, chunk_sizes)
+      end
+    end)
+
     {:noreply, state}
   end
 
@@ -164,17 +185,25 @@ defmodule PaxosKV.Acceptor do
     {:noreply, delete_keys(state, keys)}
   end
 
+  def handle_info({:sync, basic_states}, state) do
+    {:noreply, merge(state, basic_states)}
+  end
+
   ###################################
   ####  Helpers
 
   defp reply(basic_state, key, state, message) do
-    {:reply, message, %{state | basic_states: Map.put(state.basic_states, key, basic_state)}}
+    {:reply, message, add_basic_state(state, key, basic_state)}
   end
 
   defp multi_call(nodes, bucket, message) do
     name = Module.concat(bucket, @name)
     {responses, _bad_nodes} = GenServer.multi_call(nodes, name, message)
     Enum.map(responses, fn {_node, response} -> response end)
+  end
+
+  defp add_basic_state(state, key, basic_state) do
+    %{state | basic_states: Map.put(state.basic_states, key, basic_state)}
   end
 
   defp add_pid_monitor(state, key, {_value, meta}) do
@@ -205,7 +234,7 @@ defmodule PaxosKV.Acceptor do
 
   defp still_valid?({_, %{key: key}} = value, basic_states) do
     basic_state = basic_states[key]
-    if Helpers.still_valid?(value) and !!basic_state and basic_state.accepted? do
+    if !!basic_state and basic_state.accepted? and Helpers.still_valid?(value) do
       still_valid?(basic_state.accepted_value, basic_states)
     else
       false
@@ -246,6 +275,82 @@ defmodule PaxosKV.Acceptor do
     delete_keys(new_state, List.flatten(Map.values(key_refs)))
   end
 
+  defp merge(state, basic_states) do
+    merged_basic_states =
+      Map.merge(state.basic_states, basic_states, fn _key, old, new ->
+        {acc?, acc_id, acc_value} =
+          max(
+            {old.accepted?, old.accepted_id, old.accepted_value},
+            {new.accepted?, new.accepted_id, new.accepted_value}
+          )
+
+        %BasicPaxosState{
+          min_proposal: max(old.min_proposal, new.min_proposal),
+          accepted?: acc?,
+          accepted_id: acc_id,
+          accepted_value: acc_value
+        }
+      end)
+
+    new_state = %{state | basic_states: merged_basic_states}
+
+    old_keys = MapSet.new(Map.keys(state.basic_states))
+    new_keys = MapSet.new(Map.keys(basic_states))
+
+    new_new_state =
+      for key <- MapSet.difference(new_keys, old_keys), reduce: new_state do
+        state ->
+          basic_state = merged_basic_states[key]
+          value = basic_state.accepted_value
+
+          cond do
+            basic_state.accepted? and still_valid?(value, merged_basic_states) ->
+              Learner.accepted(Node.self(), state.bucket, key, basic_state.accepted_id, value)
+
+              state
+              |> add_pid_monitor(key, value)
+              |> add_node_monitor(key, value)
+              |> add_key_monitor(key, value)
+
+            basic_state.accepted? ->
+              delete_keys(state, [key])
+
+            true ->
+              state
+          end
+      end
+
+    for key <- MapSet.intersection(new_keys, old_keys), reduce: new_new_state do
+      state ->
+        old_basic_state = state.basic_states[key]
+        new_basic_state = merged_basic_states[key]
+
+        old_value = old_basic_state.accepted_value
+        value = new_basic_state.accepted_value
+
+        cond do
+          old_value == value ->
+            state
+
+          value.acceptd? and still_valid?(value, merged_basic_states) ->
+            Learner.accepted(Node.self(), state.bucket, key, new_basic_state.accepted_id, value)
+
+            state
+            |> delete_keys([key])
+            |> add_basic_state(key, new_basic_state)
+            |> add_pid_monitor(key, value)
+            |> add_node_monitor(key, value)
+            |> add_key_monitor(key, value)
+
+          value.accepted? ->
+            delete_keys(state, [key])
+
+          true ->
+            state
+        end
+    end
+  end
+
   defp handle_priority_messages(state) do
     receive do
       Msg.monitor_down(ref: _, type: :process, pid: _, reason: _) = msg ->
@@ -255,8 +360,25 @@ defmodule PaxosKV.Acceptor do
       Msg.nodedown(_node) = msg ->
         {:noreply, new_state} = handle_info(msg, state)
         handle_priority_messages(new_state)
+
+      Msg.nodeup(_node) = msg ->
+        {:noreply, new_state} = handle_info(msg, state)
+        handle_priority_messages(new_state)
+
+      {:sync, _basic_states} = msg ->
+        {:noreply, new_state} = handle_info(msg, state)
+        handle_priority_messages(new_state)
+
     after
       0 -> state
     end
+  end
+
+  defp sync_in_chunks(_node, _keys, _map, []), do: nil
+
+  defp sync_in_chunks(node, keys, map, [chunk_size | rest_of_sizes]) do
+    {chunk_keys, rest_of_keys} = Enum.split(keys, chunk_size)
+    send({__MODULE__, node}, {:sync, Map.take(map, chunk_keys)})
+    sync_in_chunks(node, rest_of_keys, map, rest_of_sizes)
   end
 end

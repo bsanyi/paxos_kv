@@ -70,9 +70,11 @@ defmodule PaxosKV do
   is not yet set or has been deleted.
   """
   def get(key, opts \\ []) do
+    default? = Keyword.has_key?(opts, :default)
     case Learner.get(key, opts) do
-      {value, _meta} -> value
-      _ -> Keyword.get(opts, :default)
+      {:ok, {value, _meta}} -> {:ok, value}
+      {:error, :not_found} when default? -> {:ok, Keyword.get(opts, :default)}
+      error -> error
     end
   end
 
@@ -83,9 +85,11 @@ defmodule PaxosKV do
   registered.
   """
   def pid(key, opts \\ []) do
+    default? = Keyword.has_key?(opts, :default)
     case Learner.get(key, opts) do
-      {_value, %{pid: pid}} -> pid
-      _ -> Keyword.get(opts, :default)
+      {:ok, {_value, %{pid: pid}}} -> {:ok, pid}
+      {:error, :not_found} when default? -> {:ok, Keyword.get(opts, :default)}
+      error -> error
     end
   end
 
@@ -97,9 +101,11 @@ defmodule PaxosKV do
   otherwise.
   """
   def node(key, opts \\ []) do
+    default? = Keyword.has_key?(opts, :default)
     case Learner.get(key, opts) do
-      {_value, %{node: node}} -> node
-      _ -> Keyword.get(opts, :default)
+      {:ok, {_value, %{node: node}}} -> {:ok, node}
+      {:error, :not_found} when default? -> {:ok, Keyword.get(opts, :default)}
+      error -> error
     end
   end
 end
