@@ -72,47 +72,53 @@ be available.
 
 The main function you need to know is `PaxosKV.put(key, value)`. This is used
 to associate `value` with the `key`. Both `key` and `value` can be any term.
-(The only restriction is that it is discouraged to use annon functions, because
-keys and values are shared among nodes, and differences between ERTS versions
-across the BEAM cluster can cause problems when sening functions through the
-wire.)
+(The only restriction is that it is discouraged to use anonymous functions,
+because keys and values are shared among nodes, and differences between ERTS
+versions across the BEAM cluster can cause problems when sending functions
+through the wire.)
 
 Once a key-value pair is set, there's no way you can change the value of the
 key. The cluster will remember it forever and a day. Further calls to
 `PaxosKV.put(key, value)` with the same key but a different value will just
-return the old value.
+return `{:ok, old_value}` with the old value.
 
-`put` always returns the value associated with the key. This means that if you
-obtain a value from calling `put(key, _)`, any other process on any node that
-has called `put` with the same key in the past or will call it in the future
-will also receive exactly the same value. (This holds true only if you do not
-use any of the deletion methods discussed later in this document. Keep on
-reading for more details.)
+`put` always returns `{:ok, value}` with the value associated with the key.
+This means that if you obtain a value from calling `put(key, _)`, any other
+process on any node that has called `put` with the same key in the past or will
+call it in the future will also receive exactly the same value. (This holds
+true only if you do not use any of the deletion methods discussed later in this
+document. Keep on reading for more details.)
 
 
 ### Reading values
 
 `PaxosKV.get(key)` and `PaxosKV.get(key, default: default_value)` can be used
-to read values associated with `key`. `dafault_value` is returned when there's
-no value associated with `key` in the cluster.
+to read values associated with `key`. The function returns:
+- `{:ok, value}` when a value is found for the key
+- `{:ok, default_value}` when the key is not found and a `default:` option is
+  provided
+- `{:error, :not_found}` when the key is not found and no default is provided
+- `{:error, :no_quorum}` when the cluster doesn't have enough nodes to reach
+  consensus
 
 Please avoid using `PaxosKV.get` when possible because in the background it may
 triggers a Paxos round, and 1) that can be expensive, and 2) can even change
 the state of the network in case there was an unfinished Paxos round. Use `put`
-whenever possible. `put` always returns the value chosen by the network.
+whenever possible. `put` always returns `{:ok, value}` with the value chosen by
+the network.
 
 
 ### Erase a key from the key-value store
 
 Well, that is normally not possible. A key is set to a specific value in the
-system if a majority of the Paxos acceptors accept the value. In order to delete a
-key from the store, you need a coordinated effort among the nodes to delete the
-key from all the acceptors at the same time. If only one of them does not
-delete the key for some reason (network problem, lost messages, whatever), the
-value sneaks back to the cluster when the next `put(key, value)` is called.
-This is why there's no `erase` or `delete` function in `PaxosKV`.
+system if a majority of the Paxos acceptors accept the value. In order to
+delete a key from the store, you need a coordinated effort among the nodes to
+delete the key from all the acceptors at the same time. If only one of them
+does not delete the key for some reason (network problem, lost messages,
+whatever), the value sneaks back to the cluster when the next `put(key, value)`
+is called.  This is why there's no `erase` or `delete` function in `PaxosKV`.
 
-However, ther is a way to get rid of the old, tired keys, that involves BEAM
+However, there is a way to get rid of the old, tired keys, that involves BEAM
 machinery. When setting a key-value pair, you can attach some metadata to the
 key that helps Paxos acceptors decide when to forget a key. For instance, you
 can attach a pid (process identifier) to the key-value pair telling `PaxosKV`
@@ -121,27 +127,52 @@ alive:
 
     PaxosKV.put(key, value, pid: pid)
 
-The attached `pid` is in this case monitored by all acceptors. When the monitor goes
-down, the key is considered no longer valid, and it is erased from the state of
-the acceptors.
+The attached `pid` is in this case monitored by all acceptors. When the monitor
+goes down, the key is considered no longer valid, and it is erased from the
+state of the acceptors.
 
 Monitor down messages don't get lost. They are delivered even when a remote pid
 is monitored and the remote host is disconnected. In `PaxosKV` this is
 beneficial. This mechanism handles network splits well.
 
 You can check the pid associated with a `key` by calling `PaxosKV.pid(key)`. It
-returns `nil` if there's no pid associated with the key, or there's no key
-registered at all.
+returns `{:ok, pid}` if there's a pid associated with the key, or
+`{:error, :not_found}` if there's no key registered. You can use the
+`default: d` option to return `{:ok, d}` instead when the key is not found.
 
-You can also attach cluster node names to key-value pairs. `PaxosKV` will delete
-the key when the given node goes down or disconnects:
+You can also attach cluster node names to key-value pairs. `PaxosKV` will
+delete the key when the given node goes down or disconnects:
 
     PaxosKV.put(key, value, node: node)
 
 The options `pid:` and `node:` can be used together. In case one of them
 triggers, the key-value pair is removed. The order of the options does not
 matter. `PaxosKV.node(key)` can be used to get the node set by `node: _`
-option.
+option. It returns `{:ok, node}` if there's a node associated with the key, or
+`{:error, :not_found}` if there's no key registered. You can use the
+`default: d` option to return `{:ok, d}` instead when the key is not found.
+
+You can also bind a key-value pair to the lifetime of another key. When the
+referenced key is deleted, all keys bound to it will also be removed:
+
+    PaxosKV.put(key1, value1, key: key2)
+
+This creates a dependency where `key1` will be automatically deleted when
+`key2` is removed from the store. This is useful for creating hierarchical
+relationships between keys.
+
+Additionally, you can set a time-to-live for a key-value pair using the
+`until:` option:
+
+    PaxosKV.put(key, value, until: PaxosKV.Helpers.now() + 60_000)
+
+The `until:` option takes a timestamp in milliseconds (system time). The
+key-value pair will be automatically removed when the system time reaches the
+specified timestamp. `PaxosKV.Helpers.now()` returns the current system time in
+milliseconds, making it easy to set relative expiration times.
+
+All these options (`pid:`, `node:`, `key:`, and `until:`) can be combined. If
+any of the conditions triggers, the key-value pair will be removed.
 
 There's another strange way to erase keys from `PaxosKV`, and that is by using
 buckets. A bucket is just a supervisor with its child processes from the BEAMs
@@ -179,9 +210,8 @@ starting its remaining children:
     children = [
       ...
       {PaxosKV.Bucket, bucket: MyApp.MyBucket},
-      {PaxosKV.PauseUntil,
-          fn -> PaxosKV.Helpers.wait_for_bucket(MyApp.MyBucket) end},
-      ... # remaining childrend
+      {PaxosKV.PauseUntil, fn -> PaxosKV.Helpers.wait_for_bucket(MyApp.MyBucket) end},
+      ... # remaining children
     ]
 
 `PaxosKV.Bucket` registers the bucket name as its own name. If that's not what
@@ -271,9 +301,9 @@ When scaling your cluster up or down, it's essential to update the
 
 function to adjust the value to a new target size. It's crucial to note that
 setting a smaller `cluster_size` than the number of currently available nodes
-is not recommended as it may lead to consnsus problems.
+is not recommended as it may lead to consensus problems.
 
-To ensure a stable cluster, we recommend scaling in small increments/dcrements.
+To ensure a stable cluster, we recommend scaling in small increments/decrements.
 
 If you want to add a new node to the cluster, first increase the `cluster_size`
 by 1 with `resize_cluster/1`, and then start the new node. This ensures that

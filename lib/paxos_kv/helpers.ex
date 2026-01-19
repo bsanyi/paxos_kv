@@ -8,7 +8,7 @@ defmodule PaxosKV.Helpers do
   def now, do: System.system_time(:millisecond)
 
   @doc """
-  This is a syncronization function. It blocks the caller until the `predicate`
+  This is a synchronization function. It blocks the caller until the `predicate`
   function returns a truthy value (anything but `nil` or `false`).
   """
   def wait_for(predicate, sleep_period_ms \\ 300, counter \\ 0) do
@@ -27,6 +27,9 @@ defmodule PaxosKV.Helpers do
     end
   end
 
+  @doc """
+  Blocks until the bucket's learner, acceptor, and proposer processes are ready.
+  """
   def wait_for_bucket(bucket) do
     learner = Module.concat(bucket, Learner)
     acceptor = Module.concat(bucket, Acceptor)
@@ -77,7 +80,7 @@ defmodule PaxosKV.Helpers do
   end
 
   @doc """
-  Takes a list of messages and eliminates all the messages from the process mailbox.
+  Removes all the given messages from the process mailbox.
   """
   def flush_messages([msg | rest]) do
     receive do
@@ -95,11 +98,17 @@ defmodule PaxosKV.Helpers do
     for {k, v} <- map, v == value, do: k
   end
 
+  @doc """
+  Returns `{bucket_name, full_module_name}` for the given bucket suffix.
+  """
   def name(opts, bucket_suffix) do
     bucket = Keyword.get(opts, :bucket, PaxosKV)
     {bucket, Module.concat(bucket, bucket_suffix)}
   end
 
+  @doc """
+  Checks if a value-metadata tuple is still valid (pid alive, node connected, time not expired).
+  """
   def still_valid?({_, meta}) do
     true &&
       validate_pid(meta) &&

@@ -4,7 +4,7 @@ defmodule PaxosKV.MixProject do
   def project do
     [
       app: :paxos_kv,
-      version: "0.5.0",
+      version: "0.5.1",
       elixir: "~> 1.17 or ~> 1.18 or ~> 1.19",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,

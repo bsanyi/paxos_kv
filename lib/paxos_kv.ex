@@ -9,35 +9,34 @@ defmodule PaxosKV do
   alias PaxosKV.{Helpers, Proposer, Learner}
 
   @doc """
-
   Stores the given value under the key in the collective memory (a KV store) of
   the cluster.
 
       PaxosKV.put(key, value)
+      PaxosKV.put(key, value, pid: self())
 
-  It can take further options
+  The function returns:
+  - `{:ok, value}` when consensus is reached for the key
+  - `{:error, :invalid_value}` when the value is invalid
+  - `{:error, :no_quorum}` when the cluster doesn't have enough nodes (default behavior)
+
+  Note: The returned `value` may not be the same as the `value` argument if another
+  process has already set a different value for the key. Once a key has a consensus
+  value, it cannot be changed.
+
+  ## Options
 
   * `bucket: b` -- use bucket `b` to store the key-value pair
   * `pid: p` -- keep the key-value pair as long as pid `p` is alive
   * `node: n` -- keep the key-value pair as long as node `n` is connected
-  * `key: k` -- keep the key-value pair as long as key `k` present
+  * `key: k` -- keep the key-value pair as long as key `k` is present
   * `until: u` -- keep the key-value pair until system time `u` (milliseconds)
-  * `no_quorum: :retry | :fail | :return` -- Try again, crash or just return an
-    error tuple when there's no quorum.
+  * `no_quorum: :retry | :fail | :return` -- controls behavior when there's no quorum:
+    - `:return` (default) -- returns `{:error, :no_quorum}`
+    - `:retry` -- retries until quorum is reached (blocks indefinitely)
+    - `:fail` -- throws an exception
 
-  The return value of the call is `{:ok, value}` when there's a consensus value
-  for the `key`. The `value` returned is not always the `value` argument of the
-  `PaxosKV.put` function, it can be a value proposed by another process. It can
-  also return `{:error, reason}`, when something goes wrong.
-
-  `{:error, :no_quorum}` means the cluster does not have enough nodes. In order
-  to make a decision / reach consensus, more than `cluster_size / 2` nodes have
-  to be part of the cluster. (Cluster size is a config param.) The option
-  `:no_quorum` can change the behavior of `put`. Whern set to `:retry`, it
-  won't return this tuple, but it will try again and again until it can reach
-  enough nodes. The option `no_quorum: :fail` will generate an exception
-  instead.
-
+  To reach consensus, more than `cluster_size / 2` nodes must be part of the cluster.
   """
   def put(key, value, opts \\ []) do
     case Proposer.propose(key, value, opts) do
@@ -65,9 +64,14 @@ defmodule PaxosKV do
   @doc """
   Returns the value for the given key in the cluster.
 
-  It renurns `nil` when the key is not registered. The option `default: d`
-  defines the value `d` that should be returned instead of nil when the key
-  is not yet set or has been deleted.
+  The function returns:
+  - `{:ok, value}` when the key is registered
+  - `{:ok, default}` when the key is not found and the `default: d` option is provided
+  - `{:error, :not_found}` when the key is not registered and no default is provided
+  - `{:error, :no_quorum}` when the cluster doesn't have enough nodes to reach consensus
+
+  The option `default: d` defines the value `d` that should be returned (as `{:ok, d}`)
+  when the key is not yet set or has been deleted.
   """
   def get(key, opts \\ []) do
     default? = Keyword.has_key?(opts, :default)
@@ -79,10 +83,14 @@ defmodule PaxosKV do
   end
 
   @doc """
-  Returns the pid the key-vaue pair is bound to.  This is the pid set by the
-  `pid: p` option in `put/3`.  `default: d` can be used the return `d` instead
-  of `nil` when there's not pid set for the value or the key-value pair is not
-  registered.
+  Returns the pid the key-value pair is bound to. This is the pid set by the
+  `pid: p` option in `put/3`.
+
+  The function returns:
+  - `{:ok, pid}` when a pid is associated with the key
+  - `{:ok, default}` when the key is not found and the `default: d` option is provided
+  - `{:error, :not_found}` when the key is not registered and no default is provided
+  - `{:error, :no_quorum}` when the cluster doesn't have enough nodes to reach consensus
   """
   def pid(key, opts \\ []) do
     default? = Keyword.has_key?(opts, :default)
@@ -94,11 +102,14 @@ defmodule PaxosKV do
   end
 
   @doc """
-  Returns the node name the key-vaue pair is bound to.  This is the node set by
-  the `node: n` option in `put/3`.  It returns `nil` when there is no node is
-  bound to the key-vaue pair, or the key-value pair is not registered. The
-  option `default: d` makes the call return d when it would return `nil`
-  otherwise.
+  Returns the node name the key-value pair is bound to. This is the node set by
+  the `node: n` option in `put/3`.
+
+  The function returns:
+  - `{:ok, node}` when a node is associated with the key
+  - `{:ok, default}` when the key is not found and the `default: d` option is provided
+  - `{:error, :not_found}` when the key is not registered and no default is provided
+  - `{:error, :no_quorum}` when the cluster doesn't have enough nodes to reach consensus
   """
   def node(key, opts \\ []) do
     default? = Keyword.has_key?(opts, :default)
