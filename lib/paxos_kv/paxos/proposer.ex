@@ -134,11 +134,11 @@ defmodule PaxosKV.Proposer do
   # returns the same node name on all nodes, so eventually every proposer will
   # fall back to the same primary proposer.
   defp primary_node(key) do
-    {nodes, n} = Cluster.nodes_and_cluster_size()
+    nodes = Cluster.nodes()
 
     nodes
     |> Enum.sort()
-    |> Enum.at(:erlang.phash2(key, n))
+    |> Enum.at(:erlang.phash2(key, length(nodes)))
   end
 
   # `check_quorum(list, n)` normally just returns the `list` when it is long
