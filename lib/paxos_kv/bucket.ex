@@ -1,4 +1,12 @@
 defmodule PaxosKV.Bucket do
+  @moduledoc """
+  Supervisor for a bucket's Paxos processes.
+
+  A bucket contains the three core Paxos components: Learner, Acceptor, and
+  Proposer. This supervisor manages these processes and ensures they are
+  properly supervised and restarted if needed.
+  """
+
   use Supervisor
 
   def start_link(opts) do

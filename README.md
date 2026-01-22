@@ -164,11 +164,11 @@ relationships between keys.
 Additionally, you can set a time-to-live for a key-value pair using the
 `until:` option:
 
-    PaxosKV.put(key, value, until: PaxosKV.Helpers.now() + 60_000)
+    PaxosKV.put(key, value, until: PaxosKV.now() + 60_000)
 
 The `until:` option takes a timestamp in milliseconds (system time). The
 key-value pair will be automatically removed when the system time reaches the
-specified timestamp. `PaxosKV.Helpers.now()` returns the current system time in
+specified timestamp. `PaxosKV.now()` returns the current system time in
 milliseconds, making it easy to set relative expiration times.
 
 All these options (`pid:`, `node:`, `key:`, and `until:`) can be combined. If

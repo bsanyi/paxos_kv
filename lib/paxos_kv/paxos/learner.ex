@@ -1,4 +1,12 @@
 defmodule PaxosKV.Learner do
+  @moduledoc """
+  Implements the Learner role in the Paxos consensus algorithm.
+
+  The Learner discovers and caches values that have been chosen by the cluster.
+  It queries Acceptors to determine if a quorum has accepted the same value for
+  a key, and attempts to complete interrupted consensus rounds when necessary.
+  """
+
   @name String.to_atom(List.last(Module.split(__MODULE__)))
   alias PaxosKV.{Cluster, Helpers, Proposer, Acceptor}
   require PaxosKV.Helpers.Msg, as: Msg
@@ -80,6 +88,7 @@ defmodule PaxosKV.Learner do
   use GenServer
 
   defmodule State do
+    @moduledoc "State struct for the Paxos Learner process."
     defstruct bucket: nil, votes: %{}, pid_monitors: %{}, node_monitors: %{}, cache: %{}
   end
 

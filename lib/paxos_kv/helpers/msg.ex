@@ -1,5 +1,10 @@
 defmodule PaxosKV.Helpers.Msg do
-  @moduledoc false
+  @moduledoc """
+  Macros for pattern matching common Erlang messages.
+
+  This module provides convenient macros for matching against node monitoring
+  messages, task replies, and process monitor DOWN messages.
+  """
 
   defmacro nodeup(node) do
     quote do

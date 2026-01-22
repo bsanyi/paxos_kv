@@ -1,5 +1,11 @@
 defmodule PaxosKV.Application do
-  @moduledoc false
+  @moduledoc """
+  OTP application module for PaxosKV.
+
+  This module starts the application supervision tree, which includes the main
+  bucket (containing Learner, Acceptor, and Proposer processes) and the cluster
+  management GenServer.
+  """
 
   use Application
   alias PaxosKV.{Cluster, PauseUntil, Helpers}

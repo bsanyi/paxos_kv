@@ -1,4 +1,12 @@
 defmodule PaxosKV.Acceptor do
+  @moduledoc """
+  Implements the Acceptor role in the Paxos consensus algorithm.
+
+  The Acceptor responds to prepare and accept requests from Proposers. It
+  maintains the state of accepted proposals and enforces the protocol rules
+  that ensure safety (agreement on a single value per key).
+  """
+
   @name String.to_atom(List.last(Module.split(__MODULE__)))
 
   alias PaxosKV.{Cluster, Helpers, Learner}
@@ -7,14 +15,41 @@ defmodule PaxosKV.Acceptor do
   ###################################
   ####  API
 
+  @doc """
+  Sends a prepare request to Acceptors on the specified nodes.
+
+  This is the first phase of the Paxos protocol. The Acceptor will promise
+  not to accept proposals with IDs lower than the given `id`.
+
+  Returns a list of responses from the Acceptors.
+  """
   def prepare(nodes, bucket, id, key) do
     multi_call(nodes, bucket, {:prepare, key, id})
   end
 
+  @doc """
+  Sends an accept request to Acceptors on the specified nodes.
+
+  This is the second phase of the Paxos protocol. The Acceptor will accept
+  the proposed value if it hasn't promised to reject it.
+
+  Returns a list of responses from the Acceptors.
+  """
   def accept(nodes, bucket, id, key, value) do
     multi_call(nodes, bucket, {:accept, key, id, value})
   end
 
+  @doc """
+  Returns a list of all keys stored across Acceptors on the specified nodes.
+
+  The results are flattened and deduplicated.
+
+  ## Examples
+
+      iex> PaxosKV.Acceptor.keys([:node1@localhost, :node2@localhost], PaxosKV)
+      [:key1, :key2, :key3]
+
+  """
   def keys(nodes, bucket) do
     multi_call(nodes, bucket, :keys)
     |> List.flatten()

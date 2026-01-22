@@ -1,4 +1,13 @@
 defmodule PaxosKV.Proposer do
+  @moduledoc """
+  Implements the Proposer role in the Paxos consensus algorithm.
+
+  The Proposer initiates consensus rounds by proposing values to Acceptors. It
+  coordinates the two-phase protocol (prepare and accept phases) to reach
+  consensus on a value for a given key. When contention is detected, it falls
+  back to a primary proposer to ensure liveness.
+  """
+
   @name String.to_atom(List.last(Module.split(__MODULE__)))
   alias PaxosKV.{Helpers, Cluster, Acceptor, Learner}
 
@@ -64,6 +73,7 @@ defmodule PaxosKV.Proposer do
   use GenServer
 
   defmodule State do
+    @moduledoc "State module for the Paxos Proposer process."
     defstruct [:id, :bucket, :redirects]
   end
 

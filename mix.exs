@@ -4,7 +4,7 @@ defmodule PaxosKV.MixProject do
   def project do
     [
       app: :paxos_kv,
-      version: "0.5.2",
+      version: "0.6.0",
       elixir: "~> 1.17 or ~> 1.18 or ~> 1.19",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
@@ -45,7 +45,8 @@ defmodule PaxosKV.MixProject do
   defp deps do
     [
       {:stream_data, "~> 1.0", only: :test},
-      {:ex_doc, ">= 0.0.0", only: :dev, runtime: false}
+      {:ex_doc, ">= 0.0.0", only: :dev, runtime: false},
+      {:credo, "~> 1.7", only: :dev, runtime: false}
     ]
   end
 end

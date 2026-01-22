@@ -1,4 +1,12 @@
 defmodule PaxosKV.PauseUntil do
+  @moduledoc """
+  A special GenServer that executes a function during initialization.
+
+  This module is used to pause the supervisor's startup sequence until a given
+  function completes. After executing the function, the GenServer returns
+  `:ignore`, which causes it to not be added to the supervision tree.
+  """
+
   use GenServer
 
   def start_link(fun) do

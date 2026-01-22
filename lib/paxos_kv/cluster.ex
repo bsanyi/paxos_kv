@@ -1,4 +1,12 @@
 defmodule PaxosKV.Cluster do
+  @moduledoc """
+  Manages the cluster state and node membership.
+
+  This module tracks which nodes are part of the distributed cluster, monitors
+  node connections, and maintains the configured cluster size. It provides
+  functions to query the current cluster state and check if a quorum is present.
+  """
+
   require PaxosKV.Helpers.Msg, as: Msg
   alias PaxosKV.Helpers
 
@@ -8,23 +16,78 @@ defmodule PaxosKV.Cluster do
   ############################################
   ####  API
 
+  @doc """
+  Returns the list of currently connected nodes in the cluster.
+
+  ## Examples
+
+      iex> PaxosKV.Cluster.nodes()
+      [:node1@localhost, :node2@localhost]
+
+  """
   def nodes do
     :persistent_term.get(@nodes_key, [])
   end
 
+  @doc """
+  Returns the configured cluster size.
+
+  This is the total number of nodes expected to participate in the cluster,
+  not necessarily the number of currently connected nodes.
+
+  ## Examples
+
+      iex> PaxosKV.Cluster.cluster_size()
+      3
+
+  """
   def cluster_size do
     {_time, _node, size} = :persistent_term.get(@cluster_size_key)
     size
   end
 
+  @doc """
+  Returns both the connected nodes list and the cluster size as a tuple.
+
+  ## Examples
+
+      iex> PaxosKV.Cluster.nodes_and_cluster_size()
+      {[:node1@localhost, :node2@localhost], 3}
+
+  """
   def nodes_and_cluster_size do
     {nodes(), cluster_size()}
   end
 
+  @doc """
+  Checks if the cluster currently has a quorum.
+
+  A quorum exists when more than half of the configured cluster size nodes
+  are connected.
+
+  ## Examples
+
+      iex> PaxosKV.Cluster.quorum?()
+      true
+
+  """
   def quorum? do
     Helpers.quorum?(nodes(), cluster_size())
   end
 
+  @doc """
+  Dynamically resizes the cluster to a new size.
+
+  Attempts to update the cluster size on all nodes. Returns `:ok` if all
+  nodes successfully updated to the new size, `:not_in_sync` if nodes
+  disagreed, or `{:error, reason}` if the operation failed.
+
+  ## Examples
+
+      iex> PaxosKV.Cluster.resize_cluster(5)
+      :ok
+
+  """
   def resize_cluster(new_size) do
     t = System.system_time()
     node = Node.self()

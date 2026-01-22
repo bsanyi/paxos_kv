@@ -1,4 +1,8 @@
 defmodule Chaos do
+  @moduledoc """
+  This module is part of the testing suite.
+  """
+
   def loop(n) do
     f =
       fn

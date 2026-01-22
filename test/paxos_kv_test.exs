@@ -138,16 +138,16 @@ defmodule PaxosKVTest do
   test "KV pairs can have a due date" do
     value = "value"
     other_value = value <> "2"
-    assert {:error, :invalid_value} == PaxosKV.put(:until1, value, until: Helpers.now() - 1)
+    assert {:error, :invalid_value} == PaxosKV.put(:until1, value, until: PaxosKV.now() - 1)
     :erlang.garbage_collect()
     :erlang.yield()
-    assert {:ok, value} == PaxosKV.put(:until2, value, until: Helpers.now() + 50)
+    assert {:ok, value} == PaxosKV.put(:until2, value, until: PaxosKV.now() + 50)
     assert {:ok, value} == PaxosKV.get(:until2)
     Process.sleep(50 + 1)
     assert {:error, :not_found} == PaxosKV.get(:until2)
 
     assert {:ok, other_value} ==
-             PaxosKV.put(:until2, other_value, until: Helpers.now() + :timer.seconds(2))
+             PaxosKV.put(:until2, other_value, until: PaxosKV.now() + :timer.seconds(2))
   end
 
   test "reaches consensus", %{node2: node2, node3: node3} do

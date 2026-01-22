@@ -6,7 +6,7 @@ defmodule PaxosKV do
   The most important function you need to know is `PaxosKV.put`.
   """
 
-  alias PaxosKV.{Helpers, Proposer, Learner}
+  alias PaxosKV.{Helpers, Proposer, Acceptor, Learner}
 
   @doc """
   Stores the given value under the key in the collective memory (a KV store) of
@@ -23,6 +23,18 @@ defmodule PaxosKV do
   Note: The returned `value` may not be the same as the `value` argument if another
   process has already set a different value for the key. Once a key has a consensus
   value, it cannot be changed.
+
+  ## Examples
+
+      iex> PaxosKV.put(:user_name, "Alice")
+      {:ok, "Alice"}
+
+      iex> PaxosKV.put(:counter, 42)
+      {:ok, 42}
+
+      # Setting a value with expiration time
+      iex> PaxosKV.put(:session, "xyz", until: PaxosKV.now() + 60_000)
+      {:ok, "xyz"}
 
   ## Options
 
@@ -72,6 +84,19 @@ defmodule PaxosKV do
 
   The option `default: d` defines the value `d` that should be returned (as `{:ok, d}`)
   when the key is not yet set or has been deleted.
+
+  ## Examples
+
+      iex> PaxosKV.put(:user_name, "Alice")
+      iex> PaxosKV.get(:user_name)
+      {:ok, "Alice"}
+
+      iex> PaxosKV.get(:non_existent_key)
+      {:error, :not_found}
+
+      iex> PaxosKV.get(:non_existent_key, default: "default_value")
+      {:ok, "default_value"}
+
   """
   def get(key, opts \\ []) do
     default? = Keyword.has_key?(opts, :default)
@@ -84,6 +109,33 @@ defmodule PaxosKV do
   end
 
   @doc """
+  Returns a list of all keys stored in the cluster.
+
+  This function queries all nodes in the cluster and returns a deduplicated
+  list of all keys that have been stored. You can optionally specify a bucket
+  to query keys from a specific namespace.
+
+  The function returns:
+  - A list of keys (any Erlang terms) when successful
+  - `[]` (empty list) when there are no keys or when the cluster is not available
+
+  ## Examples
+
+      iex> PaxosKV.put(:user_name, "Alice")
+      iex> PaxosKV.put(:counter, 42)
+      iex> PaxosKV.keys()
+      [:user_name, :counter]
+
+      # Query a specific bucket
+      iex> PaxosKV.keys(MyBucket)
+      [:key1, :key2]
+
+  """
+  def keys(bucket \\ PaxosKV) do
+    Acceptor.keys(PaxosKV.Cluster.nodes(), bucket)
+  end
+
+  @doc """
   Returns the pid the key-value pair is bound to. This is the pid set by the
   `pid: p` option in `put/3`.
 
@@ -92,6 +144,14 @@ defmodule PaxosKV do
   - `{:ok, default}` when the key is not found and the `default: d` option is provided
   - `{:error, :not_found}` when the key is not registered and no default is provided
   - `{:error, :no_quorum}` when the cluster doesn't have enough nodes to reach consensus
+
+  ## Examples
+
+      iex> pid = spawn(fn -> Process.sleep(1000) end)
+      iex> PaxosKV.put(:session, "xyz", pid: pid)
+      iex> PaxosKV.pid(:session)
+      {:ok, pid}
+
   """
   def pid(key, opts \\ []) do
     default? = Keyword.has_key?(opts, :default)
@@ -112,6 +172,13 @@ defmodule PaxosKV do
   - `{:ok, default}` when the key is not found and the `default: d` option is provided
   - `{:error, :not_found}` when the key is not registered and no default is provided
   - `{:error, :no_quorum}` when the cluster doesn't have enough nodes to reach consensus
+
+  ## Examples
+
+      iex> PaxosKV.put(:config, %{setting: "value"}, node: :node1@localhost)
+      iex> PaxosKV.node(:config)
+      {:ok, :node1@localhost}
+
   """
   def node(key, opts \\ []) do
     default? = Keyword.has_key?(opts, :default)
@@ -122,4 +189,10 @@ defmodule PaxosKV do
       error -> error
     end
   end
+
+  @doc """
+  Returns the current time that can be used in the `until: ...` option.
+  The time is measured in milliseconds and is actually the system time.
+  """
+  def now, do: System.system_time(:millisecond)
 end

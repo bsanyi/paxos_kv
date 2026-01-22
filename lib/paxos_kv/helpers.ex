@@ -1,11 +1,11 @@
 defmodule PaxosKV.Helpers do
-  @moduledoc false
+  @moduledoc """
+  Internal utility functions for PaxosKV.
 
-  @doc """
-  Returns the current time that can be used in the `until: ...` option.
-  The time is measured in milliseconds and is actually the system time.
+  This module provides helper functions for quorum validation, process and node
+  monitoring, synchronization, and value validation. These functions are used
+  internally by other PaxosKV modules.
   """
-  def now, do: System.system_time(:millisecond)
 
   @doc """
   This is a synchronization function. It blocks the caller until the `predicate`
@@ -43,9 +43,26 @@ defmodule PaxosKV.Helpers do
   @doc """
   Checks if the `list` contains enough elements (node names, replies from
   nodes, etc.) to consider it a quorum.
+
+  ## Examples
+
+      iex> PaxosKV.Helpers.quorum?([:node1, :node2], 3)
+      true
+
+      iex> PaxosKV.Helpers.quorum?([:node1], 3)
+      false
+
   """
   def quorum?(list, n), do: 2 * length(list) > n
 
+  @doc """
+  Monitors a process and associates it with a key.
+
+  If the pid is not nil, it demonitors any existing monitors for the same key,
+  creates a new monitor for the pid, and updates the pid_monitors map.
+
+  Returns the updated pid_monitors map.
+  """
   def monitor_pid(pid, key, pid_monitors) do
     if pid do
       new_monitors =
@@ -63,6 +80,12 @@ defmodule PaxosKV.Helpers do
     end
   end
 
+  @doc """
+  Tracks that a key is associated with a specific node.
+
+  Updates the node_monitors map to track which keys depend on which nodes.
+  Returns the updated node_monitors map.
+  """
   def monitor_node(node, key, node_monitors) do
     if node do
       Map.update(node_monitors, node, MapSet.new([key]), &MapSet.put(&1, key))
@@ -71,6 +94,12 @@ defmodule PaxosKV.Helpers do
     end
   end
 
+  @doc """
+  Tracks a dependency relationship between two keys.
+
+  If `key` depends on `xkey`, this function updates the key_monitors map
+  to record this relationship. Returns the updated key_monitors map.
+  """
   def monitor_key(xkey, key, key_monitors) do
     if xkey do
       Map.update(key_monitors, xkey, MapSet.new([key]), &MapSet.put(&1, key))
@@ -124,9 +153,21 @@ defmodule PaxosKV.Helpers do
   defp validate_node(%{node: node}), do: node_alive?(node)
   defp validate_node(_), do: true
 
-  defp validate_until(%{until: time}), do: time >= now()
+  defp validate_until(%{until: time}), do: time >= PaxosKV.now()
   defp validate_until(_), do: true
 
+  @doc """
+  Checks if a process is alive, even on remote nodes.
+
+  For local processes, uses `Process.alive?/1`. For remote processes,
+  performs an RPC call to check the process status on the remote node.
+
+  ## Examples
+
+      iex> PaxosKV.Helpers.process_alive?(self())
+      true
+
+  """
   def process_alive?(pid) when is_pid(pid) do
     node = :erlang.node(pid)
 
@@ -140,10 +181,27 @@ defmodule PaxosKV.Helpers do
       false
   end
 
+  @doc """
+  Checks if a node is alive and connected.
+
+  Returns `true` if the node responds to ping, `false` otherwise.
+
+  ## Examples
+
+      iex> PaxosKV.Helpers.node_alive?(Node.self())
+      true
+
+  """
   def node_alive?(node) do
     Node.ping(node) == :pong
   end
 
+  @doc """
+  Sleeps for a random duration between 0 and 750 milliseconds.
+
+  Used for implementing randomized backoff when retrying operations
+  to avoid thundering herd problems.
+  """
   def random_backoff do
     0..750
     |> Enum.random()
