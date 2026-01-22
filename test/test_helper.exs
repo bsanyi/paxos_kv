@@ -24,6 +24,7 @@ defmodule TestHelper do
     for app <- ~w[compiler elixir logger runtime_tools wx observer stream_data]a do
       TestHelper.call(pid, :application, :ensure_started, [app])
     end
+
     TestHelper.call(pid, :application, :set_env, [:paxos_kv, :cluster_size, n])
     TestHelper.call(pid, :application, :ensure_started, [:paxos_kv])
 

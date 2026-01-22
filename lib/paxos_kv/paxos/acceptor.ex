@@ -59,7 +59,7 @@ defmodule PaxosKV.Acceptor do
     defstruct bucket: nil,
               pid_monitors: %{},
               node_monitors: %{},
-              keys: %{},
+              key_monitors: %{},
               basic_states: %{}
   end
 
@@ -144,12 +144,9 @@ defmodule PaxosKV.Acceptor do
 
   @impl true
   def handle_info(Msg.monitor_down(ref: ref, type: :process, pid: _, reason: _), state) do
-    if Map.has_key?(state.pid_monitors, ref) do
-      key = state.pid_monitors[ref]
-
+    if key = state.pid_monitors[ref] do
       {:noreply, delete_keys(state, [key])}
     else
-      # should not happen
       {:noreply, state}
     end
   end
@@ -160,8 +157,8 @@ defmodule PaxosKV.Acceptor do
     # start_link ?
     Task.start(fn ->
       Helpers.wait_for(fn ->
-        (Node.ping(node) == :pong) &&
-          (:erpc.call(node, PaxosKV.Cluster, :ping, []) == :pong) &&
+        Node.ping(node) == :pong &&
+          :erpc.call(node, PaxosKV.Cluster, :ping, []) == :pong &&
           is_pid(:erpc.call(node, Process, :whereis, [__MODULE__]))
       end)
 
@@ -180,9 +177,11 @@ defmodule PaxosKV.Acceptor do
   end
 
   def handle_info(Msg.nodedown(node), state) do
-    keys = Map.get(state.node_monitors, node, [])
-
-    {:noreply, delete_keys(state, keys)}
+    if keys = Map.get(state.node_monitors, node) do
+      {:noreply, delete_keys(state, MapSet.to_list(keys))}
+    else
+      {:noreply, state}
+    end
   end
 
   def handle_info({:sync, basic_states}, state) do
@@ -226,7 +225,7 @@ defmodule PaxosKV.Acceptor do
     xkey = Map.get(meta, :key)
 
     if xkey && key != xkey do
-      %{state | keys: Helpers.monitor_key(xkey, key, state.keys)}
+      %{state | key_monitors: Helpers.monitor_key(xkey, key, state.key_monitors)}
     else
       state
     end
@@ -234,6 +233,7 @@ defmodule PaxosKV.Acceptor do
 
   defp still_valid?({_, %{key: key}} = value, basic_states) do
     basic_state = basic_states[key]
+
     if !!basic_state and basic_state.accepted? and Helpers.still_valid?(value) do
       still_valid?(basic_state.accepted_value, basic_states)
     else
@@ -246,6 +246,8 @@ defmodule PaxosKV.Acceptor do
   defp delete_keys(state, []), do: state
 
   defp delete_keys(state, keys) do
+    key_set = MapSet.new(keys)
+
     basic_states = Map.drop(state.basic_states, keys)
 
     for {ref, key} <- state.pid_monitors, key in keys do
@@ -255,20 +257,26 @@ defmodule PaxosKV.Acceptor do
     pid_monitors = Map.reject(state.pid_monitors, fn {_ref, key} -> key in keys end)
 
     node_monitors =
-      for {k, v} <- state.node_monitors do
-        {k, Enum.reject(v, &(&1 in keys))}
-      end
-      |> Enum.reject(&match?({_, []}, &1))
+      state.node_monitors
+      |> Enum.flat_map(fn {k, v} ->
+        narrowed = MapSet.difference(v, key_set)
+
+        if Enum.empty?(narrowed) do
+          []
+        else
+          [{k, narrowed}]
+        end
+      end)
       |> Enum.into(%{})
 
-    {key_refs, new_keys} = Map.split(state.keys, keys)
+    {key_refs, key_monitors} = Map.split(state.key_monitors, keys)
 
     new_state =
       %{
         state
         | pid_monitors: pid_monitors,
           node_monitors: node_monitors,
-          keys: new_keys,
+          key_monitors: key_monitors,
           basic_states: basic_states
       }
 
@@ -368,7 +376,6 @@ defmodule PaxosKV.Acceptor do
       {:sync, _basic_states} = msg ->
         {:noreply, new_state} = handle_info(msg, state)
         handle_priority_messages(new_state)
-
     after
       0 -> state
     end

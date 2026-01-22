@@ -8,15 +8,17 @@ defmodule PaxosKVTest do
 
     ##  Restart the origin node with longnames:
     Application.stop(:paxos_kv)
+
     TestHelper.retry(fn ->
       Node.stop()
       Node.start(:node1, :longnames)
     end)
+
     Application.start(:paxos_kv)
 
     if Node.self() == :nonode@nohost or not match?({:ok, [{~c"node1", _port}]}, :net_adm.names()) do
-      IO.puts :stderr, "\n\nSeems like another node is running."
-      IO.puts :stderr, "Please stop is before running tests."
+      IO.puts(:stderr, "\n\nSeems like another node is running.")
+      IO.puts(:stderr, "Please stop is before running tests.")
       assert {:ok, [{~c"node1", _port}]} = :net_adm.names()
       System.halt(1)
     end
@@ -143,7 +145,9 @@ defmodule PaxosKVTest do
     assert {:ok, value} == PaxosKV.get(:until2)
     Process.sleep(50 + 1)
     assert {:error, :not_found} == PaxosKV.get(:until2)
-    assert {:ok, other_value} == PaxosKV.put(:until2, other_value, until: Helpers.now() + :timer.seconds(2))
+
+    assert {:ok, other_value} ==
+             PaxosKV.put(:until2, other_value, until: Helpers.now() + :timer.seconds(2))
   end
 
   test "reaches consensus", %{node2: node2, node3: node3} do

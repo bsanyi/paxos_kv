@@ -14,10 +14,12 @@ defmodule OracleTest do
 
     ##  Restart the origin node with longnames:
     Application.stop(:paxos_kv)
+
     TestHelper.retry(fn ->
       Node.stop()
       Node.start(:node0, :longnames)
     end)
+
     # We deliberately not start the service on node0.
 
     if Node.self() == :nonode@nohost or not match?({:ok, [{~c"node0", _port}]}, :net_adm.names()) do

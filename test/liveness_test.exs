@@ -29,15 +29,17 @@ defmodule LivenessTest do
 
     ##  Restart the origin node with longnames:
     Application.stop(:paxos_kv)
+
     TestHelper.retry(fn ->
       Node.stop()
       Node.start(:node0, :longnames)
     end)
+
     # We deliberately not start the service on node0.
 
     if Node.self() == :nonode@nohost or not match?({:ok, [{~c"node0", _port}]}, :net_adm.names()) do
-      IO.puts :stderr, "\n\nSeems like another node is running."
-      IO.puts :stderr, "Please stop it before running tests."
+      IO.puts(:stderr, "\n\nSeems like another node is running.")
+      IO.puts(:stderr, "Please stop it before running tests.")
       assert {:ok, [{~c"node0", _port}]} = :net_adm.names()
       System.halt(1)
     end
@@ -49,12 +51,13 @@ defmodule LivenessTest do
     d = TestHelper.get_env_int("D", default: 3)
 
     ##  Start N peers and connect to them:
-    nodes = for i <- 1..n do
-      name = :"node#{i}"
-      node = TestHelper.peer(name, n)
-      root_pid = spawn_chaos(node, d)
-      {i, name, node, root_pid}
-    end
+    nodes =
+      for i <- 1..n do
+        name = :"node#{i}"
+        node = TestHelper.peer(name, n)
+        root_pid = spawn_chaos(node, d)
+        {i, name, node, root_pid}
+      end
 
     ##  Give some prepare time to the peers:
     for {_i, _name, node, _root} <- nodes do
@@ -67,6 +70,7 @@ defmodule LivenessTest do
       for {_, _name, node, _root} <- nodes do
         TestHelper.tear_down(node)
       end
+
       Node.stop()
     end)
 

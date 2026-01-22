@@ -19,6 +19,7 @@ defmodule Chaos do
                 for child <- children do
                   send(child, {:put, key, values, self()})
                 end
+
                 :erlang.yield()
                 from
 
@@ -26,6 +27,7 @@ defmodule Chaos do
                 for child <- children do
                   send(child, {:get, key, self()})
                 end
+
                 :erlang.yield()
                 from
             end

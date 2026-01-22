@@ -178,8 +178,8 @@ defmodule PaxosKV.Learner do
         state.node_monitors
         |> Enum.flat_map(fn {node, keys} ->
           cond do
-            keys == [key] -> []
-            key in keys -> [{node, keys -- [key]}]
+            keys == MapSet.new([key]) -> []
+            key in keys -> [{node, MapSet.delete(keys, key)}]
             true -> [{node, keys}]
           end
         end)
@@ -229,7 +229,7 @@ defmodule PaxosKV.Learner do
 
   defp still_valid?({_, %{key: key}} = value, cache) do
     if Helpers.still_valid?(value) and Map.has_key?(cache, key) do
-        still_valid?(cache[key], cache)
+      still_valid?(cache[key], cache)
     else
       false
     end

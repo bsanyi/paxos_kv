@@ -9,6 +9,7 @@ defmodule RollingRestartTest do
     TestHelper.init_epmd()
 
     Application.stop(:paxos_kv)
+
     TestHelper.retry(fn ->
       Node.stop()
       Node.start(:node0, :longnames)
@@ -93,7 +94,7 @@ defmodule RollingRestartTest do
     assert {:ok, V3} == exec_on_a_node(nodes, :put, [K3, B, [pid: self()]])
 
     # V4 is kept, because node0 was not restarted, only 1..N nodes:
-    assert {:ok, V4} == exec_on_a_node(nodes,  :put, [K4, C, [host: Enum.random(node_names)]])
+    assert {:ok, V4} == exec_on_a_node(nodes, :put, [K4, C, [host: Enum.random(node_names)]])
 
     # K5, K6, K7 is lost and can be re-registered, because of `node:` options:
     assert {:ok, D} == exec_on_a_node(nodes, :put, [K5, D, [host: Enum.random(node_names)]])
@@ -115,15 +116,19 @@ defmodule RollingRestartTest do
           res =
             receive do
               {:nodedown, _} -> :ok
-            after 10_000 ->
-              :err
+            after
+              10_000 ->
+                :err
             end
 
           res == :ok
         end)
 
         new_node_pid = TestHelper.peer(node, n)
-        Helpers.wait_for(fn -> TestHelper.call(new_node_pid, PaxosKV.Cluster, :quorum?, []) == true end)
+
+        Helpers.wait_for(fn ->
+          TestHelper.call(new_node_pid, PaxosKV.Cluster, :quorum?, []) == true
+        end)
 
         Enum.map(nodes, fn
           {^node, _pid} -> {node, new_node_pid}

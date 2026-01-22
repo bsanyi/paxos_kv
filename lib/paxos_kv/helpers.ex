@@ -46,10 +46,10 @@ defmodule PaxosKV.Helpers do
   """
   def quorum?(list, n), do: 2 * length(list) > n
 
-  def monitor_pid(pid, key, monitors) do
+  def monitor_pid(pid, key, pid_monitors) do
     if pid do
       new_monitors =
-        for ref <- which_keys(monitors, key), reduce: monitors do
+        for ref <- which_keys(pid_monitors, key), reduce: pid_monitors do
           acc ->
             Process.demonitor(ref, [:flush])
             Map.delete(acc, ref)
@@ -59,23 +59,23 @@ defmodule PaxosKV.Helpers do
 
       Map.put(new_monitors, ref, key)
     else
-      monitors
+      pid_monitors
     end
   end
 
-  def monitor_node(node, key, monitors) do
+  def monitor_node(node, key, node_monitors) do
     if node do
-      Map.update(monitors, node, [key], &Enum.uniq([key | &1]))
+      Map.update(node_monitors, node, MapSet.new([key]), &MapSet.put(&1, key))
     else
-      monitors
+      node_monitors
     end
   end
 
-  def monitor_key(xkey, key, monitors) do
+  def monitor_key(xkey, key, key_monitors) do
     if xkey do
-      Map.update(monitors, xkey, [key], &Enum.uniq([key | &1]))
+      Map.update(key_monitors, xkey, MapSet.new([key]), &MapSet.put(&1, key))
     else
-      monitors
+      key_monitors
     end
   end
 

@@ -75,6 +75,7 @@ defmodule PaxosKV do
   """
   def get(key, opts \\ []) do
     default? = Keyword.has_key?(opts, :default)
+
     case Learner.get(key, opts) do
       {:ok, {value, _meta}} -> {:ok, value}
       {:error, :not_found} when default? -> {:ok, Keyword.get(opts, :default)}
@@ -94,6 +95,7 @@ defmodule PaxosKV do
   """
   def pid(key, opts \\ []) do
     default? = Keyword.has_key?(opts, :default)
+
     case Learner.get(key, opts) do
       {:ok, {_value, %{pid: pid}}} -> {:ok, pid}
       {:error, :not_found} when default? -> {:ok, Keyword.get(opts, :default)}
@@ -113,6 +115,7 @@ defmodule PaxosKV do
   """
   def node(key, opts \\ []) do
     default? = Keyword.has_key?(opts, :default)
+
     case Learner.get(key, opts) do
       {:ok, {_value, %{node: node}}} -> {:ok, node}
       {:error, :not_found} when default? -> {:ok, Keyword.get(opts, :default)}
